@@ -59,8 +59,8 @@ PlayerSettings:
   iosShowActivityIndicatorOnLoading: -1
   androidShowActivityIndicatorOnLoading: -1
   iosUseCustomAppBackgroundBehavior: 0
-  allowedAutorotateToPortrait: 1
-  allowedAutorotateToPortraitUpsideDown: 1
+  allowedAutorotateToPortrait: 0
+  allowedAutorotateToPortraitUpsideDown: 0
   allowedAutorotateToLandscapeRight: 1
   allowedAutorotateToLandscapeLeft: 1
   useOSAutorotation: 1
@@ -820,7 +820,26 @@ PlayerSettings:
   webGLCloseOnQuit: 0
   webWasm2023: 0
   webEnableSubmoduleStrippingCompatibility: 0
-  scriptingDefineSymbols: {}
+  scriptingDefineSymbols:
+    Android: DOTWEEN;UNITY_MCP_READY
+    EmbeddedLinux: DOTWEEN;UNITY_MCP_READY
+    GameCoreScarlett: DOTWEEN;UNITY_MCP_READY
+    GameCoreXboxOne: DOTWEEN;UNITY_MCP_READY
+    Kepler: DOTWEEN;UNITY_MCP_READY
+    LinuxHeadlessSimulation: DOTWEEN;UNITY_MCP_READY
+    Nintendo Switch: DOTWEEN;UNITY_MCP_READY
+    PS4: DOTWEEN;UNITY_MCP_READY
+    PS5: DOTWEEN;UNITY_MCP_READY
+    QNX: DOTWEEN;UNITY_MCP_READY
+    ReservedCFE: DOTWEEN;UNITY_MCP_READY
+    Server: UNITY_MCP_READY
+    Standalone: DOTWEEN;UNITY_MCP_READY
+    VisionOS: DOTWEEN;UNITY_MCP_READY
+    WebGL: DOTWEEN;UNITY_MCP_READY
+    Windows Store Apps: DOTWEEN;UNITY_MCP_READY
+    XboxOne: DOTWEEN;UNITY_MCP_READY
+    iPhone: DOTWEEN;UNITY_MCP_READY
+    tvOS: DOTWEEN;UNITY_MCP_READY
   additionalCompilerArguments: {}
   platformArchitecture: {}
   scriptingBackend:
