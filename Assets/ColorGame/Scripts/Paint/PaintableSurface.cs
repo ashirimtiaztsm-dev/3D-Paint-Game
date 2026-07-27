@@ -1,9 +1,8 @@
+using System;
 using UnityEngine;
 
-// Permanent visual painting for one surface: stamps each accepted spray hit into a persistent,
-// ping-ponged RenderTexture and composites it onto the surface via MaterialPropertyBlock. Holds no
-// gameplay state (no colour correctness, no completion tracking) — purely "where has paint landed
-// and what does it look like", left for a later stage to interpret.
+// Permanent visual painting for one surface. Every actual GPU brush stamp also raises StampApplied,
+// allowing a low-resolution progress tracker to mirror exactly what was stamped without GPU readback.
 public class PaintableSurface : MonoBehaviour
 {
     private static readonly int PaintTexPropertyId = Shader.PropertyToID("_PaintTex");
@@ -26,10 +25,11 @@ public class PaintableSurface : MonoBehaviour
     [SerializeField] private Color initialClearColor = new Color(0f, 0f, 0f, 0f);
 
     [Header("Brush")]
-    [SerializeField] private float brushRadiusUV = 0.045f;
-    [SerializeField] [Range(0f, 1f)] private float brushHardness = 0.8f;
-    [SerializeField] [Range(0f, 1f)] private float brushOpacity = 1f;
-    [SerializeField] private float paintAmountMultiplier = 4f;
+    [SerializeField] private float brushRadiusUV = 0.3f;
+    [SerializeField, Range(0f, 1f)] private float brushHardness = 0.8f;
+    [SerializeField, Range(0f, 1f)] private float brushOpacity = 1f;
+    [SerializeField] private float paintAmountMultiplier = 20f;
+    [SerializeField, Range(1, 64)] private int maximumInterpolatedStampsPerHit = 24;
 
     [Header("State")]
     [SerializeField] private bool paintingEnabled = true;
@@ -44,6 +44,9 @@ public class PaintableSurface : MonoBehaviour
 
     public RenderTexture PaintTexture => currentPaintTexture;
     public bool IsInitialized { get; private set; }
+
+    public event Action<PaintStampData> StampApplied;
+    public event Action PaintCleared;
 
     private void Awake()
     {
@@ -81,11 +84,11 @@ public class PaintableSurface : MonoBehaviour
 
     private void OnEnable()
     {
-        if (marker != null)
-        {
-            marker.SprayHitReceived += HandleSprayHitReceived;
-            marker.StrokeInterrupted += HandleStrokeInterrupted;
-        }
+        if (marker == null)
+            return;
+
+        marker.SprayHitReceived += HandleSprayHitReceived;
+        marker.StrokeInterrupted += HandleStrokeInterrupted;
     }
 
     private void OnDisable()
@@ -95,21 +98,14 @@ public class PaintableSurface : MonoBehaviour
             marker.SprayHitReceived -= HandleSprayHitReceived;
             marker.StrokeInterrupted -= HandleStrokeInterrupted;
         }
+
+        hasPreviousStrokeUV = false;
     }
 
     private void OnDestroy()
     {
-        if (currentPaintTexture != null)
-        {
-            currentPaintTexture.Release();
-            Destroy(currentPaintTexture);
-        }
-
-        if (workingPaintTexture != null)
-        {
-            workingPaintTexture.Release();
-            Destroy(workingPaintTexture);
-        }
+        ReleaseRenderTexture(ref currentPaintTexture);
+        ReleaseRenderTexture(ref workingPaintTexture);
 
         if (brushMaterial != null)
             Destroy(brushMaterial);
@@ -125,6 +121,7 @@ public class PaintableSurface : MonoBehaviour
         ClearRenderTexture(workingPaintTexture, initialClearColor);
         hasPreviousStrokeUV = false;
         ApplyPaintTextureToRenderer();
+        PaintCleared?.Invoke();
     }
 
     public void SetPaintingEnabled(bool isEnabled)
@@ -141,7 +138,6 @@ public class PaintableSurface : MonoBehaviour
             return;
 
         Vector2 uv = hit.TextureCoordinate;
-        Color color = hit.Paint.DisplayColor;
         float opacity = Mathf.Clamp01(brushOpacity * hit.PaintAmount * paintAmountMultiplier);
 
         if (opacity <= 0f)
@@ -149,27 +145,28 @@ public class PaintableSurface : MonoBehaviour
 
         if (hasPreviousStrokeUV)
         {
-            float spacing = brushRadiusUV * 0.5f;
+            float spacing = Mathf.Max(0.0001f, brushRadiusUV * 0.5f);
             float distance = Vector2.Distance(previousStrokeUV, uv);
 
             if (distance > spacing)
             {
-                int steps = Mathf.CeilToInt(distance / spacing);
+                int requestedSteps = Mathf.CeilToInt(distance / spacing);
+                int steps = Mathf.Min(requestedSteps, maximumInterpolatedStampsPerHit);
 
                 for (int i = 1; i <= steps; i++)
                 {
                     float t = (float)i / steps;
-                    StampAt(Vector2.Lerp(previousStrokeUV, uv, t), color, opacity);
+                    StampAt(Vector2.Lerp(previousStrokeUV, uv, t), hit.Paint, opacity);
                 }
             }
             else
             {
-                StampAt(uv, color, opacity);
+                StampAt(uv, hit.Paint, opacity);
             }
         }
         else
         {
-            StampAt(uv, color, opacity);
+            StampAt(uv, hit.Paint, opacity);
         }
 
         previousStrokeUV = uv;
@@ -181,8 +178,10 @@ public class PaintableSurface : MonoBehaviour
         hasPreviousStrokeUV = false;
     }
 
-    private void StampAt(Vector2 uv, Color color, float opacity)
+    private void StampAt(Vector2 uv, PaintColorDefinition paint, float opacity)
     {
+        Color color = paint.DisplayColor;
+
         brushMaterial.SetVector(BrushUVId, new Vector4(uv.x, uv.y, 0f, 0f));
         brushMaterial.SetFloat(BrushRadiusId, brushRadiusUV);
         brushMaterial.SetFloat(BrushHardnessId, brushHardness);
@@ -191,14 +190,23 @@ public class PaintableSurface : MonoBehaviour
 
         Graphics.Blit(currentPaintTexture, workingPaintTexture, brushMaterial);
 
-        (currentPaintTexture, workingPaintTexture) = (workingPaintTexture, currentPaintTexture);
+        RenderTexture previous = currentPaintTexture;
+        currentPaintTexture = workingPaintTexture;
+        workingPaintTexture = previous;
 
         ApplyPaintTextureToRenderer();
+
+        StampApplied?.Invoke(new PaintStampData(
+            paint,
+            uv,
+            brushRadiusUV,
+            brushHardness,
+            opacity));
     }
 
     private void ApplyPaintTextureToRenderer()
     {
-        if (surfaceRenderer == null)
+        if (surfaceRenderer == null || propertyBlock == null)
             return;
 
         surfaceRenderer.GetPropertyBlock(propertyBlock);
@@ -208,7 +216,11 @@ public class PaintableSurface : MonoBehaviour
 
     private RenderTexture CreatePaintRenderTexture()
     {
-        var renderTexture = new RenderTexture(textureResolution, textureResolution, 0, RenderTextureFormat.ARGB32)
+        RenderTexture renderTexture = new RenderTexture(
+            textureResolution,
+            textureResolution,
+            0,
+            RenderTextureFormat.ARGB32)
         {
             filterMode = FilterMode.Bilinear,
             wrapMode = TextureWrapMode.Clamp,
@@ -224,9 +236,30 @@ public class PaintableSurface : MonoBehaviour
 
     private static void ClearRenderTexture(RenderTexture renderTexture, Color color)
     {
+        if (renderTexture == null)
+            return;
+
         RenderTexture previous = RenderTexture.active;
         RenderTexture.active = renderTexture;
-        GL.Clear(true, true, color);
+        GL.Clear(false, true, color);
         RenderTexture.active = previous;
+    }
+
+    private static void ReleaseRenderTexture(ref RenderTexture renderTexture)
+    {
+        if (renderTexture == null)
+            return;
+
+        renderTexture.Release();
+        Destroy(renderTexture);
+        renderTexture = null;
+    }
+
+    private void OnValidate()
+    {
+        textureResolution = Mathf.Clamp(textureResolution, 64, 2048);
+        brushRadiusUV = Mathf.Max(0.0001f, brushRadiusUV);
+        paintAmountMultiplier = Mathf.Max(0f, paintAmountMultiplier);
+        maximumInterpolatedStampsPerHit = Mathf.Clamp(maximumInterpolatedStampsPerHit, 1, 64);
     }
 }

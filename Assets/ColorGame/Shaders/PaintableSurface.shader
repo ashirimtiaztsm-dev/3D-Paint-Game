@@ -1,7 +1,5 @@
 Shader "ColorGame/PaintableSurface"
 {
-    // Composites the accumulated paint RenderTexture over a base colour/texture. No lighting model —
-    // this stage only needs the painted result to be visible, not lit.
     Properties
     {
         _BaseMap ("Base Map", 2D) = "white" {}
@@ -11,7 +9,12 @@ Shader "ColorGame/PaintableSurface"
 
     SubShader
     {
-        Tags { "RenderType" = "Opaque" "RenderPipeline" = "UniversalPipeline" "Queue" = "Geometry" }
+        Tags
+        {
+            "RenderType" = "Opaque"
+            "RenderPipeline" = "UniversalPipeline"
+            "Queue" = "Geometry"
+        }
 
         Pass
         {
@@ -43,24 +46,29 @@ Shader "ColorGame/PaintableSurface"
             struct Varyings
             {
                 float4 positionHCS : SV_POSITION;
-                float2 uv : TEXCOORD0;
+                float2 baseUV : TEXCOORD0;
+                float2 paintUV : TEXCOORD1;
             };
 
-            Varyings Vert(Attributes IN)
+            Varyings Vert(Attributes input)
             {
-                Varyings OUT;
-                OUT.positionHCS = TransformObjectToHClip(IN.positionOS.xyz);
-                OUT.uv = TRANSFORM_TEX(IN.uv, _BaseMap);
-                return OUT;
+                Varyings output;
+                output.positionHCS = TransformObjectToHClip(input.positionOS.xyz);
+                output.baseUV = TRANSFORM_TEX(input.uv, _BaseMap);
+                output.paintUV = input.uv;
+                return output;
             }
 
-            half4 Frag(Varyings IN) : SV_Target
+            half4 Frag(Varyings input) : SV_Target
             {
-                half4 baseColor = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, IN.uv) * _BaseColor;
-                half4 paint = SAMPLE_TEXTURE2D(_PaintTex, sampler_PaintTex, IN.uv);
+                half4 baseColor =
+                    SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.baseUV) * _BaseColor;
+
+                half4 paint =
+                    SAMPLE_TEXTURE2D(_PaintTex, sampler_PaintTex, input.paintUV);
 
                 half3 finalColor = lerp(baseColor.rgb, paint.rgb, paint.a);
-                return half4(finalColor, 1.0);
+                return half4(finalColor, 1.0h);
             }
             ENDHLSL
         }

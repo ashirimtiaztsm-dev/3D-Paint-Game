@@ -1,9 +1,8 @@
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-using TMPro;
 
-// Persistent HUD readout of the gun's current paint. Purely event-driven (no Update polling) —
-// subscribes to PaintGunReservoir and refreshes only when colour or amount actually changes.
+// Persistent HUD readout of the gun's current paint. Refreshes only when colour or amount changes.
 public class PaintReservoirUI : MonoBehaviour
 {
     [Header("References")]
@@ -30,6 +29,7 @@ public class PaintReservoirUI : MonoBehaviour
 
         reservoir.PaintColorChanged += HandlePaintColorChanged;
         reservoir.AmountChanged += HandleAmountChanged;
+        Refresh();
     }
 
     private void OnDisable()
@@ -43,12 +43,15 @@ public class PaintReservoirUI : MonoBehaviour
 
     private void HandlePaintColorChanged(PaintColorDefinition paint)
     {
-        ApplyColor(paint);
+        ApplyColor(reservoir != null && !reservoir.IsEmpty ? paint : null);
     }
 
     private void HandleAmountChanged(float currentAmount)
     {
         ApplyAmount(currentAmount);
+
+        if (reservoir != null)
+            ApplyColor(reservoir.IsEmpty ? null : reservoir.CurrentPaint);
     }
 
     private void Refresh()
@@ -56,7 +59,7 @@ public class PaintReservoirUI : MonoBehaviour
         if (reservoir == null)
             return;
 
-        ApplyColor(reservoir.CurrentPaint);
+        ApplyColor(reservoir.IsEmpty ? null : reservoir.CurrentPaint);
         ApplyAmount(reservoir.CurrentAmount);
     }
 

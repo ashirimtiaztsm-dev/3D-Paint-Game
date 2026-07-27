@@ -1,7 +1,5 @@
 Shader "Hidden/ColorGame/PaintBrush"
 {
-    // Blit-only shader: stamps one soft circular brush mark into the previous paint texture.
-    // Never sampled directly by a surface material — PaintableSurface.shader reads the result.
     Properties
     {
         _MainTex ("Previous Paint Texture", 2D) = "black" {}
@@ -48,24 +46,32 @@ Shader "Hidden/ColorGame/PaintBrush"
                 float2 uv : TEXCOORD0;
             };
 
-            Varyings Vert(Attributes IN)
+            Varyings Vert(Attributes input)
             {
-                Varyings OUT;
-                OUT.positionHCS = TransformObjectToHClip(IN.positionOS.xyz);
-                OUT.uv = IN.uv;
-                return OUT;
+                Varyings output;
+                output.positionHCS = TransformObjectToHClip(input.positionOS.xyz);
+                output.uv = input.uv;
+                return output;
             }
 
-            half4 Frag(Varyings IN) : SV_Target
+            half4 Frag(Varyings input) : SV_Target
             {
-                half4 previous = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, IN.uv);
+                half4 previous = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv);
 
-                float dist = distance(IN.uv, _BrushUV.xy);
-                float mask = 1.0 - smoothstep(_BrushRadius * _BrushHardness, _BrushRadius, dist);
+                float distanceFromBrush = distance(input.uv, _BrushUV.xy);
+                float innerRadius = _BrushRadius * saturate(_BrushHardness);
+                float mask = 1.0 - smoothstep(
+                    innerRadius,
+                    max(innerRadius + 0.00001, _BrushRadius),
+                    distanceFromBrush);
+
                 float stampAlpha = saturate(mask * _BrushOpacity);
 
-                half3 blendedColor = lerp(previous.rgb, _BrushColor.rgb, stampAlpha);
-                half blendedAlpha = saturate(previous.a + stampAlpha * (1.0 - previous.a));
+                half3 blendedColor =
+                    lerp(previous.rgb, _BrushColor.rgb, stampAlpha);
+
+                half blendedAlpha =
+                    saturate(previous.a + stampAlpha * (1.0 - previous.a));
 
                 return half4(blendedColor, blendedAlpha);
             }
