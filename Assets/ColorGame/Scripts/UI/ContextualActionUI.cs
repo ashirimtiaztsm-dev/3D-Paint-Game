@@ -65,6 +65,12 @@ public class ContextualActionUI : MonoBehaviour
     {
         if (detector != null)
             detector.SelectedZoneChanged -= HandleSelectedZoneChanged;
+
+        // Force-release both buttons and clear the keyboard fallback so IsCurrentActionHeld cannot
+        // read as true while this component is disabled.
+        fillButton?.ForceRelease();
+        fireButton?.ForceRelease();
+        spaceHeld = false;
     }
 
     private void Update()

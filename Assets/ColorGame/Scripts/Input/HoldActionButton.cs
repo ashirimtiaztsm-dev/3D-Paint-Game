@@ -48,6 +48,11 @@ public class HoldActionButton : MonoBehaviour, IPointerDownHandler, IPointerUpHa
         if (!interactable)
             return;
 
+        // Touch reports as Left, so this only rejects unsupported mouse buttons (e.g. right-click),
+        // not touch input.
+        if (eventData.button != PointerEventData.InputButton.Left)
+            return;
+
         if (activePointerId != NoActivePointer)
             return;
 
