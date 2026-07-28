@@ -13,12 +13,14 @@ public class PaintableSurface : MonoBehaviour
     private static readonly int BrushHardnessId = Shader.PropertyToID("_BrushHardness");
     private static readonly int BrushColorId = Shader.PropertyToID("_BrushColor");
     private static readonly int BrushOpacityId = Shader.PropertyToID("_BrushOpacity");
+    private static readonly int AllowedMaskId = Shader.PropertyToID("_AllowedMask");
 
     [Header("References")]
     [SerializeField] private PaintSurfaceMarker marker;
     [SerializeField] private Renderer surfaceRenderer;
     [SerializeField] private Shader brushShader;
     [SerializeField] private Texture2D baseTexture;
+    [SerializeField] private PaintTargetMaskProvider maskProvider;
 
     [Header("Texture")]
     [SerializeField] private int textureResolution = 512;
@@ -41,6 +43,7 @@ public class PaintableSurface : MonoBehaviour
 
     private bool hasPreviousStrokeUV;
     private Vector2 previousStrokeUV;
+    private Texture lastSetAllowedMask;
 
     public RenderTexture PaintTexture => currentPaintTexture;
     public bool IsInitialized { get; private set; }
@@ -84,6 +87,9 @@ public class PaintableSurface : MonoBehaviour
 
     private void OnEnable()
     {
+        if (maskProvider != null)
+            maskProvider.MasksRebuilt += HandleMasksRebuilt;
+
         if (marker == null)
             return;
 
@@ -93,6 +99,9 @@ public class PaintableSurface : MonoBehaviour
 
     private void OnDisable()
     {
+        if (maskProvider != null)
+            maskProvider.MasksRebuilt -= HandleMasksRebuilt;
+
         if (marker != null)
         {
             marker.SprayHitReceived -= HandleSprayHitReceived;
@@ -137,6 +146,16 @@ public class PaintableSurface : MonoBehaviour
         if (!paintingEnabled || !IsInitialized || hit.Paint == null)
             return;
 
+        // Safe fallback: no maskProvider, or no region anywhere requires this colour, means no
+        // permanent paint is applied — never fall back to an unrestricted/white mask.
+        Texture allowedMask = maskProvider != null ? maskProvider.GetAllowedMask(hit.Paint.ColorId) : null;
+
+        if (allowedMask == null)
+        {
+            hasPreviousStrokeUV = false;
+            return;
+        }
+
         Vector2 uv = hit.TextureCoordinate;
         float opacity = Mathf.Clamp01(brushOpacity * hit.PaintAmount * paintAmountMultiplier);
 
@@ -156,17 +175,17 @@ public class PaintableSurface : MonoBehaviour
                 for (int i = 1; i <= steps; i++)
                 {
                     float t = (float)i / steps;
-                    StampAt(Vector2.Lerp(previousStrokeUV, uv, t), hit.Paint, opacity);
+                    StampAt(Vector2.Lerp(previousStrokeUV, uv, t), hit.Paint, opacity, allowedMask);
                 }
             }
             else
             {
-                StampAt(uv, hit.Paint, opacity);
+                StampAt(uv, hit.Paint, opacity, allowedMask);
             }
         }
         else
         {
-            StampAt(uv, hit.Paint, opacity);
+            StampAt(uv, hit.Paint, opacity, allowedMask);
         }
 
         previousStrokeUV = uv;
@@ -178,9 +197,23 @@ public class PaintableSurface : MonoBehaviour
         hasPreviousStrokeUV = false;
     }
 
-    private void StampAt(Vector2 uv, PaintColorDefinition paint, float opacity)
+    private void HandleMasksRebuilt()
+    {
+        // Old allowed-mask Texture2D instances are gone — force the next stamp to reassign, and
+        // never let a stroke that started under the old target bridge into the newly rebuilt one.
+        lastSetAllowedMask = null;
+        hasPreviousStrokeUV = false;
+    }
+
+    private void StampAt(Vector2 uv, PaintColorDefinition paint, float opacity, Texture allowedMask)
     {
         Color color = paint.DisplayColor;
+
+        if (!ReferenceEquals(allowedMask, lastSetAllowedMask))
+        {
+            brushMaterial.SetTexture(AllowedMaskId, allowedMask);
+            lastSetAllowedMask = allowedMask;
+        }
 
         brushMaterial.SetVector(BrushUVId, new Vector4(uv.x, uv.y, 0f, 0f));
         brushMaterial.SetFloat(BrushRadiusId, brushRadiusUV);

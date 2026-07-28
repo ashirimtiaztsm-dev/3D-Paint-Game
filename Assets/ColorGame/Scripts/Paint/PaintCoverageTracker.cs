@@ -1,11 +1,17 @@
 using System;
 using UnityEngine;
 
-// Tracks correct-colour coverage on a small CPU grid. It does not read the 512x512 GPU
-// RenderTexture. Each actual brush stamp updates only the affected cells, making progress
-// deterministic, overwrite-aware, and suitable for mobile devices.
+// Tracks correct-colour coverage on a small CPU grid, per target region. Never reads the 512x512 GPU
+// RenderTexture — each actual brush stamp updates only the affected cells via PaintableSurface.StampApplied,
+// keeping progress deterministic, overwrite-aware, and mobile-friendly.
+//
+// Cell-ownership policy: when regions overlap on the same evaluation cell, the FIRST configured region
+// (lowest index in PaintTargetDefinition.Regions) owns that cell. Later regions never take ownership away
+// from an already-claimed cell — this is deliberate and documented, not an oversight.
 public class PaintCoverageTracker : MonoBehaviour
 {
+    private const int NoRegion = -1;
+
     [Header("References")]
     [SerializeField] private PaintableSurface paintableSurface;
     [SerializeField] private PaintTargetDefinition targetDefinition;
@@ -15,24 +21,63 @@ public class PaintCoverageTracker : MonoBehaviour
     [SerializeField, Range(0f, 1f)] private float paintedAlphaThreshold = 0.55f;
     [SerializeField, Range(0.01f, 1f)] private float colorTolerance = 0.28f;
 
-    private PaintColorId[] requiredColorIds;
-    private Color[] requiredColors;
+    // Per-cell grid (size = evaluationResolution^2)
+    private int[] cellRegionIndex;
+    private PaintColorId[] cellRequiredColorId;
+    private Color[] cellRequiredColor;
     private Color[] paintedColors;
     private float[] paintedAlpha;
 
-    private int totalRequiredCells;
-    private int correctCells;
-    private bool completionRaised;
+    // Per-region runtime state (size = targetDefinition.Regions.Count)
+    private bool[] regionValid;
+    private int[] regionTotalCells;
+    private int[] regionCorrectCells;
+    private float[] regionRequiredCompletion;
+    private bool[] regionMeetsThreshold;
+    private bool[] regionCompletedEventLatch;
+    private bool[] regionProgressDirty;
+
+    private int regionCount;
+    private int totalCorrectCellsOverall;
+    private int totalRequiredCellsOverall;
+    private bool overallProgressDirty;
+    private bool overallCompletionRaised;
     private bool initialized;
-    private bool progressNotificationPending;
 
     public PaintTargetDefinition TargetDefinition => targetDefinition;
-    public float CorrectProgress => totalRequiredCells > 0 ? (float)correctCells / totalRequiredCells : 0f;
-    public bool IsComplete => initialized
-        && targetDefinition != null
-        && CorrectProgress >= targetDefinition.RequiredCompletion;
+    public int RegionCount => regionCount;
 
-    public event Action<float> ProgressChanged;
+    public float OverallProgress => totalRequiredCellsOverall > 0
+        ? (float)totalCorrectCellsOverall / totalRequiredCellsOverall
+        : 0f;
+
+    public bool IsComplete
+    {
+        get
+        {
+            if (!initialized)
+                return false;
+
+            bool hasValidRegion = false;
+
+            for (int i = 0; i < regionCount; i++)
+            {
+                if (!regionValid[i])
+                    continue;
+
+                hasValidRegion = true;
+
+                if (!regionMeetsThreshold[i])
+                    return false;
+            }
+
+            return hasValidRegion;
+        }
+    }
+
+    public event Action<float> OverallProgressChanged;
+    public event Action<int, float> RegionProgressChanged;
+    public event Action<int> RegionCompleted;
     public event Action Completed;
 
     private void Awake()
@@ -66,25 +111,55 @@ public class PaintCoverageTracker : MonoBehaviour
             paintableSurface.PaintCleared -= HandlePaintCleared;
         }
 
-        progressNotificationPending = false;
+        overallProgressDirty = false;
+
+        for (int i = 0; i < regionCount; i++)
+            regionProgressDirty[i] = false;
     }
 
     private void LateUpdate()
     {
-        if (!progressNotificationPending)
-            return;
+        FlushPendingNotifications();
+    }
 
-        progressNotificationPending = false;
-        ProgressChanged?.Invoke(CorrectProgress);
+    public float GetRegionProgress(int regionIndex)
+    {
+        if (!IsValidRegionIndex(regionIndex) || regionTotalCells[regionIndex] <= 0)
+            return 0f;
+
+        return (float)regionCorrectCells[regionIndex] / regionTotalCells[regionIndex];
+    }
+
+    public bool IsRegionComplete(int regionIndex)
+    {
+        return IsValidRegionIndex(regionIndex) && regionMeetsThreshold[regionIndex];
+    }
+
+    public PaintRegionProgress GetRegionProgressData(int regionIndex)
+    {
+        if (!IsValidRegionIndex(regionIndex))
+            return new PaintRegionProgress(regionIndex, null, string.Empty, 0f, 0f, false);
+
+        PaintTargetDefinition.Region region = targetDefinition.Regions[regionIndex];
+
+        return new PaintRegionProgress(
+            regionIndex,
+            region.RequiredPaint,
+            region.DisplayName,
+            GetRegionProgress(regionIndex),
+            regionRequiredCompletion[regionIndex],
+            regionMeetsThreshold[regionIndex]);
     }
 
     [ContextMenu("Rebuild Target Grid")]
     public void InitializeEvaluationGrid()
     {
         initialized = false;
-        completionRaised = false;
-        totalRequiredCells = 0;
-        correctCells = 0;
+        overallCompletionRaised = false;
+        overallProgressDirty = false;
+        totalCorrectCellsOverall = 0;
+        totalRequiredCellsOverall = 0;
+        regionCount = 0;
 
         if (targetDefinition == null || targetDefinition.Regions == null || targetDefinition.Regions.Count == 0)
         {
@@ -92,25 +167,48 @@ public class PaintCoverageTracker : MonoBehaviour
             return;
         }
 
+        regionCount = targetDefinition.Regions.Count;
+
         int cellCount = evaluationResolution * evaluationResolution;
-        requiredColorIds = new PaintColorId[cellCount];
-        requiredColors = new Color[cellCount];
+        cellRegionIndex = new int[cellCount];
+        cellRequiredColorId = new PaintColorId[cellCount];
+        cellRequiredColor = new Color[cellCount];
         paintedColors = new Color[cellCount];
         paintedAlpha = new float[cellCount];
 
+        for (int i = 0; i < cellCount; i++)
+            cellRegionIndex[i] = NoRegion;
+
+        regionValid = new bool[regionCount];
+        regionTotalCells = new int[regionCount];
+        regionCorrectCells = new int[regionCount];
+        regionRequiredCompletion = new float[regionCount];
+        regionMeetsThreshold = new bool[regionCount];
+        regionCompletedEventLatch = new bool[regionCount];
+        regionProgressDirty = new bool[regionCount];
+
         int overlappingCells = 0;
 
-        for (int regionIndex = 0; regionIndex < targetDefinition.Regions.Count; regionIndex++)
+        for (int regionIndex = 0; regionIndex < regionCount; regionIndex++)
         {
             PaintTargetDefinition.Region region = targetDefinition.Regions[regionIndex];
-            if (region == null || region.RequiredPaint == null || region.MaskTexture == null)
+            regionRequiredCompletion[regionIndex] = 0.95f;
+
+            if (region == null || !region.IsValidConfiguration)
+            {
+                Debug.LogWarning(
+                    $"{nameof(PaintCoverageTracker)} on '{name}': region {regionIndex} of target '{targetDefinition.name}' has invalid configuration (missing paint/mask or bad completion threshold) and will be skipped.",
+                    this);
                 continue;
+            }
+
+            regionRequiredCompletion[regionIndex] = region.RequiredCompletion;
 
             Texture2D mask = region.MaskTexture;
             if (!mask.isReadable)
             {
                 Debug.LogError(
-                    $"Target mask '{mask.name}' must have Read/Write Enabled in its import settings.",
+                    $"Target mask '{mask.name}' (region {regionIndex} of '{targetDefinition.name}') must have Read/Write Enabled in its import settings.",
                     mask);
                 continue;
             }
@@ -118,6 +216,7 @@ public class PaintCoverageTracker : MonoBehaviour
             Color32[] pixels = mask.GetPixels32();
             int maskWidth = mask.width;
             int maskHeight = mask.height;
+            int claimedCells = 0;
 
             for (int y = 0; y < evaluationResolution; y++)
             {
@@ -138,39 +237,68 @@ public class PaintCoverageTracker : MonoBehaviour
                         continue;
 
                     int index = y * evaluationResolution + x;
-                    if (requiredColorIds[index] != PaintColorId.None)
-                        overlappingCells++;
 
-                    requiredColorIds[index] = region.RequiredPaint.ColorId;
-                    requiredColors[index] = region.RequiredPaint.DisplayColor;
+                    if (cellRegionIndex[index] != NoRegion)
+                    {
+                        // Already owned by an earlier region — first-region-owns policy, do not steal it.
+                        overlappingCells++;
+                        continue;
+                    }
+
+                    cellRegionIndex[index] = regionIndex;
+                    cellRequiredColorId[index] = region.RequiredPaint.ColorId;
+                    cellRequiredColor[index] = region.RequiredPaint.DisplayColor;
+                    claimedCells++;
                 }
             }
-        }
 
-        for (int i = 0; i < requiredColorIds.Length; i++)
-        {
-            if (requiredColorIds[i] != PaintColorId.None)
-                totalRequiredCells++;
+            if (claimedCells == 0)
+            {
+                Debug.LogWarning(
+                    $"{nameof(PaintCoverageTracker)} on '{name}': region {regionIndex} ('{region.DisplayName}') of target '{targetDefinition.name}' produced zero required cells and will be skipped.",
+                    this);
+                continue;
+            }
+
+            regionValid[regionIndex] = true;
+            regionTotalCells[regionIndex] = claimedCells;
+            totalRequiredCellsOverall += claimedCells;
         }
 
         if (overlappingCells > 0)
         {
             Debug.LogWarning(
-                $"{nameof(PaintCoverageTracker)} on '{name}' found {overlappingCells} overlapping target-mask cells. Later regions take priority.",
+                $"{nameof(PaintCoverageTracker)} on '{name}': target '{targetDefinition.name}' has {overlappingCells} overlapping mask cells across regions. The first configured region owns each overlapping cell; later regions do not overwrite ownership.",
                 this);
         }
 
-        if (totalRequiredCells == 0)
+        bool hasAnyValidRegion = false;
+        for (int i = 0; i < regionCount; i++)
+        {
+            if (regionValid[i])
+            {
+                hasAnyValidRegion = true;
+                break;
+            }
+        }
+
+        if (!hasAnyValidRegion)
         {
             Debug.LogError(
-                $"{nameof(PaintCoverageTracker)} on '{name}' produced an empty target grid. Check mask readability and thresholds.",
+                $"{nameof(PaintCoverageTracker)} on '{name}': target '{targetDefinition.name}' has zero valid regions. It can never complete.",
                 this);
             return;
         }
 
         initialized = true;
-        progressNotificationPending = false;
-        ProgressChanged?.Invoke(0f);
+
+        OverallProgressChanged?.Invoke(0f);
+
+        for (int i = 0; i < regionCount; i++)
+        {
+            if (regionValid[i])
+                RegionProgressChanged?.Invoke(i, 0f);
+        }
     }
 
     public void ResetProgress()
@@ -180,10 +308,22 @@ public class PaintCoverageTracker : MonoBehaviour
 
         Array.Clear(paintedColors, 0, paintedColors.Length);
         Array.Clear(paintedAlpha, 0, paintedAlpha.Length);
-        correctCells = 0;
-        completionRaised = false;
-        progressNotificationPending = false;
-        ProgressChanged?.Invoke(0f);
+        Array.Clear(regionCorrectCells, 0, regionCorrectCells.Length);
+        Array.Clear(regionMeetsThreshold, 0, regionMeetsThreshold.Length);
+        Array.Clear(regionCompletedEventLatch, 0, regionCompletedEventLatch.Length);
+        Array.Clear(regionProgressDirty, 0, regionProgressDirty.Length);
+
+        totalCorrectCellsOverall = 0;
+        overallCompletionRaised = false;
+        overallProgressDirty = false;
+
+        OverallProgressChanged?.Invoke(0f);
+
+        for (int i = 0; i < regionCount; i++)
+        {
+            if (regionValid[i])
+                RegionProgressChanged?.Invoke(i, 0f);
+        }
     }
 
     private void HandlePaintCleared()
@@ -197,15 +337,6 @@ public class PaintCoverageTracker : MonoBehaviour
             return;
 
         ApplyStampToEvaluationGrid(stamp);
-
-        float progress = CorrectProgress;
-        progressNotificationPending = true;
-
-        if (!completionRaised && progress >= targetDefinition.RequiredCompletion)
-        {
-            completionRaised = true;
-            Completed?.Invoke();
-        }
     }
 
     private void ApplyStampToEvaluationGrid(PaintStampData stamp)
@@ -227,6 +358,18 @@ public class PaintCoverageTracker : MonoBehaviour
 
             for (int x = minX; x <= maxX; x++)
             {
+                int index = y * evaluationResolution + x;
+                int regionIndex = cellRegionIndex[index];
+
+                // Painting outside every configured region's mask never counts toward anything.
+                if (regionIndex == NoRegion || !regionValid[regionIndex])
+                    continue;
+
+                // Wrong-color paint is rejected outright for this cell: no blend, no alpha change, no
+                // progress change, and it can never overwrite paint already correct for this cell.
+                if (cellRequiredColorId[index] != stamp.Paint.ColorId)
+                    continue;
+
                 float u = (x + 0.5f) / evaluationResolution;
                 float distance = Vector2.Distance(new Vector2(u, v), center);
 
@@ -238,33 +381,34 @@ public class PaintCoverageTracker : MonoBehaviour
                 if (stampAlpha <= 0f)
                     continue;
 
-                int index = y * evaluationResolution + x;
-                bool wasCorrect = IsCellCorrect(index);
+                bool wasCorrect = IsCellCorrect(index, regionIndex);
 
                 paintedColors[index] = Color.Lerp(paintedColors[index], incomingColor, stampAlpha);
                 paintedAlpha[index] = Mathf.Clamp01(
                     paintedAlpha[index] + stampAlpha * (1f - paintedAlpha[index]));
 
-                bool isCorrectNow = IsCellCorrect(index);
+                bool isCorrectNow = IsCellCorrect(index, regionIndex);
 
                 if (wasCorrect == isCorrectNow)
                     continue;
 
-                correctCells += isCorrectNow ? 1 : -1;
+                int delta = isCorrectNow ? 1 : -1;
+                regionCorrectCells[regionIndex] += delta;
+                totalCorrectCellsOverall += delta;
+
+                regionProgressDirty[regionIndex] = true;
+                overallProgressDirty = true;
             }
         }
     }
 
-    private bool IsCellCorrect(int index)
+    private bool IsCellCorrect(int index, int regionIndex)
     {
-        if (requiredColorIds[index] == PaintColorId.None)
-            return false;
-
         if (paintedAlpha[index] < paintedAlphaThreshold)
             return false;
 
         Color painted = paintedColors[index];
-        Color required = requiredColors[index];
+        Color required = cellRequiredColor[index];
 
         float red = painted.r - required.r;
         float green = painted.g - required.g;
@@ -272,6 +416,46 @@ public class PaintCoverageTracker : MonoBehaviour
         float distance = Mathf.Sqrt(red * red + green * green + blue * blue);
 
         return distance <= colorTolerance;
+    }
+
+    private void FlushPendingNotifications()
+    {
+        for (int i = 0; i < regionCount; i++)
+        {
+            if (!regionProgressDirty[i])
+                continue;
+
+            regionProgressDirty[i] = false;
+
+            float progress = GetRegionProgress(i);
+            RegionProgressChanged?.Invoke(i, progress);
+
+            bool meetsThreshold = progress >= regionRequiredCompletion[i];
+            regionMeetsThreshold[i] = meetsThreshold;
+
+            if (meetsThreshold && !regionCompletedEventLatch[i])
+            {
+                regionCompletedEventLatch[i] = true;
+                RegionCompleted?.Invoke(i);
+            }
+        }
+
+        if (overallProgressDirty)
+        {
+            overallProgressDirty = false;
+            OverallProgressChanged?.Invoke(OverallProgress);
+        }
+
+        if (!overallCompletionRaised && IsComplete)
+        {
+            overallCompletionRaised = true;
+            Completed?.Invoke();
+        }
+    }
+
+    private bool IsValidRegionIndex(int regionIndex)
+    {
+        return initialized && regionIndex >= 0 && regionIndex < regionCount && regionValid[regionIndex];
     }
 
     private static float CalculateBrushMask(float distance, float innerRadius, float outerRadius)

@@ -8,6 +8,7 @@ Shader "Hidden/ColorGame/PaintBrush"
         _BrushHardness ("Brush Hardness", Range(0, 1)) = 0.8
         _BrushColor ("Brush Color", Color) = (1, 1, 1, 1)
         _BrushOpacity ("Brush Opacity", Range(0, 1)) = 1
+        _AllowedMask ("Allowed Paint Mask", 2D) = "black" {}
     }
 
     SubShader
@@ -27,6 +28,8 @@ Shader "Hidden/ColorGame/PaintBrush"
 
             TEXTURE2D(_MainTex);
             SAMPLER(sampler_MainTex);
+            TEXTURE2D(_AllowedMask);
+            SAMPLER(sampler_AllowedMask);
 
             float4 _BrushUV;
             float _BrushRadius;
@@ -65,7 +68,11 @@ Shader "Hidden/ColorGame/PaintBrush"
                     max(innerRadius + 0.00001, _BrushRadius),
                     distanceFromBrush);
 
-                float stampAlpha = saturate(mask * _BrushOpacity);
+                // Per-pixel target clipping: a stamp can straddle more than one region, so this must be
+                // sampled at every pixel, never just checked once at the brush centre.
+                float allowed = SAMPLE_TEXTURE2D(_AllowedMask, sampler_AllowedMask, input.uv).r;
+
+                float stampAlpha = saturate(mask * _BrushOpacity * allowed);
 
                 half3 blendedColor =
                     lerp(previous.rgb, _BrushColor.rgb, stampAlpha);

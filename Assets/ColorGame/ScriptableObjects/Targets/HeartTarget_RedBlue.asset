@@ -10,17 +10,25 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: fccd101ac21ab7741915e28fab161e78, type: 3}
-  m_Name: HeartTarget_Red
+  m_Name: HeartTarget_RedBlue
   m_EditorClassIdentifier: 
   targetId: 
-  displayName: Heart (Red Only)
+  displayName: Heart (Red + Blue)
   previewSprite: {fileID: 0}
   regions:
-  - displayName: Red Region
+  - displayName: Red Side
     requiredPaint: {fileID: 11400000, guid: 409b17b0cdd865442a9dbf073ff4c026, type: 2}
-    maskTexture: {fileID: 2800000, guid: 3ec06ea733188304ba20d1eec7f0f41c, type: 3}
+    maskTexture: {fileID: 2800000, guid: 0c0f5642b0029e047ac8cac17f5b0238, type: 3}
     maskThreshold: 0.5
     requiredCompletion: 0.95
     icon: {fileID: 0}
     useUIColorOverride: 0
-    uiColorOverride: {r: 1, g: 1, b: 1, a: 1}
+    uiColorOverride: {r: 0, g: 0, b: 0, a: 0}
+  - displayName: Blue Side
+    requiredPaint: {fileID: 11400000, guid: 84c139c19d045fb4a82f4aafe3f0244d, type: 2}
+    maskTexture: {fileID: 2800000, guid: 37dc10b4a58c35b42ac48a962e477f8b, type: 3}
+    maskThreshold: 0.5
+    requiredCompletion: 0.95
+    icon: {fileID: 0}
+    useUIColorOverride: 0
+    uiColorOverride: {r: 0, g: 0, b: 0, a: 0}
