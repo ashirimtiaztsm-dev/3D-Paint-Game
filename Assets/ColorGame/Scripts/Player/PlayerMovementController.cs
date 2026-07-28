@@ -48,10 +48,15 @@ public class PlayerMovementController : MonoBehaviour
         Move();
     }
 
-    // Exposed for later cutscene / level-completion stages (Stage 8+) to freeze movement.
+    // Exposed for cutscene / level-completion stages to freeze movement. Zeroes horizontal velocity
+    // immediately on disable so movement stops on the same frame instead of coasting through the
+    // usual deceleration ramp; vertical velocity (gravity) is left untouched.
     public void SetMovementEnabled(bool isMovementEnabled)
     {
         movementEnabled = isMovementEnabled;
+
+        if (!movementEnabled)
+            horizontalVelocity = Vector3.zero;
     }
 
     private Vector3 GetCameraRelativeDirection()
