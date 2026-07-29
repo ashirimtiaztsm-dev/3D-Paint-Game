@@ -1,7 +1,9 @@
 # Asset Catalog
 
-Full inventory of assets under `Assets/`, organized by folder. Updated 2026-07-28 to reflect the
-`ColorGame/` restructure (see [CHANGELOG.md](CHANGELOG.md)). `.meta` files are omitted (one exists
+Full inventory of assets under `Assets/`, organized by folder. Updated 2026-07-29 to reflect the
+Stage 11 character/blaster/animation integration (see [CHANGELOG.md](CHANGELOG.md)) — new
+`ColorGame/Animations/` and `ColorGame/Prefabs/Player/` folders, and the two new vendor packs
+(`RPG Tiny Hero Duo/`, `Cosmic_Retro_Blasters Pack_1_FREE/`). `.meta` files are omitted (one exists
 per listed asset, as usual for Unity). See [HIERARCHY.md](HIERARCHY.md) for how these scripts
 depend on each other at runtime.
 
@@ -9,7 +11,8 @@ depend on each other at runtime.
 
 | Asset | Type | Notes |
 |---|---|---|
-| `PlayerMovementController.cs` | Script | `CharacterController`-based movement driven by `MobileInputReader`, projected onto camera-relative forward/right, with acceleration/gravity/visual rotation |
+| `PlayerMovementController.cs` | Script | `CharacterController`-based movement driven by `MobileInputReader`, projected onto camera-relative forward/right, with acceleration/gravity/visual rotation. Also exposes read-only `HorizontalSpeed`/`NormalizedHorizontalSpeed`/`IsMoving` for animation |
+| `PlayerAnimationController.cs` | Script | Drives Animator `MoveSpeed`/`IsSpraying` from `PlayerMovementController`/`PaintGunFireController`; no input reading or gameplay logic of its own |
 
 ## `ColorGame/Scripts/Camera/`
 
@@ -64,6 +67,20 @@ depend on each other at runtime.
 | `PaintReservoirUI.cs` | Script | HUD readout bound to `PaintGunReservoir` events |
 | `PaintRegionProgressRow.cs` | Script | One reusable progress row, instantiated per target region by `PaintProgressUI` |
 | `LevelCompleteController.cs` | Script | Stage 10. On `PaintCoverageTracker` on the `Canvas` GameObject (must stay active while the panel it controls starts hidden); freezes gameplay input and shows `LevelCompletePanel` on `Completed` |
+
+## `ColorGame/Animations/` — Stage 11 project-owned animation assets
+
+| Asset | Type | Notes |
+|---|---|---|
+| `Controllers/MaleCharacterPlayer.controller` | Animator Controller | Base Layer 1D blend tree (`MoveSpeed`: Idle/Move) + `RightArmSpray` masked layer (`IsSpraying`: Empty/SprayDefend). Parameters: `MoveSpeed` (float), `IsSpraying` (bool) |
+| `Masks/RightArmSpray.mask` | Avatar Mask | Humanoid body parts: `RightArm` + `RightFingers` only — isolates the spray pose to the right arm |
+| `Clips/` | — | Empty — the three vendor clips used (see below) already loop correctly and needed no project-owned copies |
+
+## `ColorGame/Prefabs/Player/`
+
+| Asset | Type | Notes |
+|---|---|---|
+| `MaleCharacterPlayer.prefab` | Prefab Variant (of `MaleCharacterPBR.prefab`) | Stage 11. The configured player visual: `weapon_l`/`weapon_r` deactivated, `RightHandWeaponSocket` under `hand_r` holding `PaintGun`/`Cosmic_Retro_Blaster_1`, `Animator` assigned `MaleCharacterPlayer.controller` with `applyRootMotion` disabled |
 
 ## `ColorGame/Shaders/`
 
@@ -125,11 +142,34 @@ depend on each other at runtime.
 | `Examples/Ground.mat`, `Player.mat` | Material | Example scene materials |
 | `Examples/Example Scene/LightingData.asset`, `ReflectionProbe-0.exr` | Baked lighting | Example scene bake data |
 
+## `RPG Tiny Hero Duo/` — Third-party Humanoid character pack (Stage 11)
+
+| Asset | Type | Notes |
+|---|---|---|
+| `Prefab/MaleCharacterPBR.prefab` | Prefab (Humanoid, valid Avatar) | Source character for the player visual — never modified; the player uses a Prefab Variant (see `ColorGame/Prefabs/Player/`) |
+| `Prefab/FemaleCharacterPBR.prefab` | Prefab | Unused sibling character, shipped with the pack |
+| `Animation/SwordAndShield/Idle_Normal_SwordAndShield.fbx` | Animation (Humanoid, loops) | Used as the Base Layer's idle blend-tree clip |
+| `Animation/SwordAndShield/InPlace/MoveFWD_Normal_InPlace_SwordAndShield.fbx` | Animation (Humanoid, loops, in-place) | Used as the Base Layer's move blend-tree clip |
+| `Animation/SwordAndShield/Defend_SwordAndShield.fbx` | Animation (Humanoid, loops) | Used (mirrored) as the `RightArmSpray` layer's `SprayDefend` state |
+| `Animation/SwordAndShield/*.fbx` (~30 more clips) | Animation | Vendor combat/movement clip set (attacks, hits, death, jumps, etc.) — not used by this stage |
+| `Animator/SwordAndShieldStance.controller`, `AnimationLayer.controller`, `RootMotion.controller` | Animator Controller | Vendor demo controllers, still assigned to `MaleCharacterPBR.prefab`/`FemaleCharacterPBR.prefab` themselves; the player uses its own `MaleCharacterPlayer.controller` instead |
+| *(textures, materials, additional meshes)* | Various | Full character pack contents; not individually catalogued here |
+
+## `Cosmic_Retro_Blasters Pack_1_FREE/` — Third-party weapon model pack (Stage 11)
+
+| Asset | Type | Notes |
+|---|---|---|
+| `Prefabs/Cosmic_Retro_Blaster_1.prefab` | Prefab | The blaster model instantiated inside `PaintGun` as the player's visible weapon — never modified |
+| `Prefabs/Cosmic_Retro_Blaster_10.prefab`, `Cosmic_Retro_Blaster_11.prefab` | Prefab | Other pack variants — unused |
+| `Models/*.fbx` (3 blasters) | Model | Source meshes for the prefabs above |
+| `Materials/*.mat`, `Textures/*.png` | Material/Texture | Blaster surface materials and textures |
+| `Demo_Scene/SceneDemo_Cosmic_Retro_Blaster_1_FREE.unity` | Scene | Vendor demo scene — not part of the game's build |
+
 ## `Scenes/`
 
 | Asset | Type | Notes |
 |---|---|---|
-| `SampleScene.unity` | Scene | Main/only gameplay scene. Its `Canvas` now includes a `LevelCompletePanel` (hidden by default) with `PanelBackground`, `TitleText`, and a `Buttons` container holding `ReplayButton`/`NextLevelButton` (each with a TMP `Label` child) — see [HIERARCHY.md](HIERARCHY.md) for the full tree |
+| `SampleScene.unity` | Scene | Main/only gameplay scene. Its `Canvas` includes a `LevelCompletePanel` (hidden by default) with `PanelBackground`, `TitleText`, and a `Buttons` container holding `ReplayButton`/`NextLevelButton` (each with a TMP `Label` child). Its `Player/PlayerVisualRoot` now holds a `MaleCharacterPlayer` prefab-variant instance in place of the old placeholder `CharacterVisual` (deactivated) — see [HIERARCHY.md](HIERARCHY.md) for the full tree |
 
 ## `Settings/` — URP configuration
 
@@ -210,20 +250,26 @@ delete if unused.
 
 ## Summary by File Type
 
+Counts below cover `ColorGame/`, `Scenes/`, `Settings/`, `TextMesh Pro/`, `Plugins/`, `TutorialInfo/`,
+and the project-authored parts of the two Stage 11 vendor packs; the vendor packs' own bulk content
+(dozens of clips/materials/textures) is summarized rather than counted file-by-file.
+
 | Extension | Count | Primarily |
 |---|---:|---|
-| `.png` | 157 | Editor icons (DemiLib/DOTween) + joystick sprites + TMP/URP art + 3 heart mask test textures |
-| `.cs` | 59 | Gameplay scripts (29 in `ColorGame/Scripts/`), joystick pack, DOTween modules, editor tooling |
+| `.png` | 157+ | Editor icons (DemiLib/DOTween) + joystick sprites + TMP/URP art + heart mask test textures (excludes `RPG Tiny Hero Duo`/`Cosmic_Retro_Blasters` textures) |
+| `.cs` | 60 | Gameplay scripts (30 in `ColorGame/Scripts/`, incl. `PlayerAnimationController.cs`), joystick pack, DOTween modules, editor tooling |
 | `.dll` | 48 | DOTween/DOTween Pro/DemiLib + NuGet deps for the Unity MCP plugin |
 | `.asset` | 19 | URP settings, TMP settings/fonts, lighting data, 5 paint ScriptableObject instances |
 | `.shader` | 16 | TextMesh Pro (14) + `PaintBrush`/`PaintableSurface` (2) |
 | `.txt` | 7 | Readmes/licenses/attribution |
-| `.mat` | 6 | Player/road/TMP materials + `PaintableSurface_Test.mat` |
-| `.unity` | 5 | 1 gameplay scene + 4 example/demo scenes (Joystick Pack, DOTween Pro) |
+| `.mat` | 6 | Player/road/TMP materials + `PaintableSurface_Test.mat` (excludes vendor pack materials) |
+| `.unity` | 6 | 1 gameplay scene + 4 example/demo scenes (Joystick Pack, DOTween Pro) + 1 Cosmic Retro Blasters demo scene |
+| `.prefab` | 5 | Joystick prefabs (4) + `MaleCharacterPlayer.prefab` (excludes vendor pack prefabs) |
 | `.shadergraph` | 4 | TextMesh Pro (HDRP/URP variants) |
-| `.prefab` | 4 | Joystick prefabs |
 | `.cginc` | 4 | TextMesh Pro shader includes |
 | `.XML` / `.xml` | 6 | DLL doc comments |
+| `.controller` | 1 | `MaleCharacterPlayer.controller` (excludes the 3 vendor `RPG Tiny Hero Duo` demo controllers) |
+| `.mask` | 1 | `RightArmSpray.mask` |
 | `.lighting` | 3 | DOTween Pro example scene lightmap settings |
 | `.json` | 2 | TMP emoji sprite metadata, NuGet install bookkeeping |
 | `.jpg` | 2 | Road texture, DOTween header image |
@@ -233,3 +279,4 @@ delete if unused.
 | `.ttf` | 1 | Liberation Sans font |
 | `.exr` | 1 | Baked reflection probe (Joystick Pack example scene) |
 | `.wlt` | 1 | Editor window layout |
+| `.fbx` | 30+ | `RPG Tiny Hero Duo` animation clips (3 used directly; rest unused) — model FBX counted separately per pack |

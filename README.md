@@ -76,8 +76,45 @@ See [ASSET_CATALOG.md](ASSET_CATALOG.md) for a full inventory of every asset in 
 - **[LevelCompleteController.cs](Assets/ColorGame/Scripts/UI/LevelCompleteController.cs)** — on
   `PaintCoverageTracker.Completed`, freezes movement/camera/fill/fire input and shows the
   level-complete panel (see below).
+- **[PlayerAnimationController.cs](Assets/ColorGame/Scripts/Player/PlayerAnimationController.cs)** —
+  drives the character `Animator`'s `MoveSpeed`/`IsSpraying` parameters from
+  `PlayerMovementController` and `PaintGunFireController` (see Character & Animation below).
 
 See [HIERARCHY.md](HIERARCHY.md) for the full event/dependency flow between these systems.
+
+## Character, Blaster & Animation
+
+The placeholder capsule visual is replaced by the **MaleCharacterPBR** Humanoid character
+(`Assets/RPG Tiny Hero Duo/`), holding the **Cosmic_Retro_Blaster_1** model
+(`Assets/Cosmic_Retro_Blasters Pack_1_FREE/`) in its right hand:
+
+- The configured character (visual + `Animator` + `MaleCharacterPlayer.controller` + right-hand
+  socket + blaster) is saved as a **Prefab Variant** at
+  [MaleCharacterPlayer.prefab](Assets/ColorGame/Prefabs/Player/MaleCharacterPlayer.prefab) — the
+  original vendor prefabs are untouched.
+- The vendor character's own sword (`weapon_r`) and shield (`weapon_l`) prop sockets are
+  deactivated (not deleted, so the Humanoid Avatar and skeleton stay intact).
+- `RightHandWeaponSocket` sits under the `hand_r` bone; the existing `PaintGun` gameplay object
+  (with `PaintSprayer`, `SprayOrigin`, particles, and the paint-reservoir visual) is parented under
+  it, so it follows the hand through every animation. `Cosmic_Retro_Blaster_1` is the visible model
+  inside `PaintGun`.
+- **[MaleCharacterPlayer.controller](Assets/ColorGame/Animations/Controllers/MaleCharacterPlayer.controller)**
+  has two layers:
+  - **Base Layer** — a 1D Blend Tree on the `MoveSpeed` float parameter, blending
+    `Idle_Normal_SwordAndShield` (0) into `MoveFWD_Normal_InPlace_SwordAndShield` (1). Root motion
+    is disabled; the in-place clip never moves the `Player` transform.
+  - **RightArmSpray** layer — masked by
+    [RightArmSpray.mask](Assets/ColorGame/Animations/Masks/RightArmSpray.mask) (right arm/fingers
+    only), switching `Empty` ↔ `SprayDefend` (`Defend_SwordAndShield`, mirrored) on the `IsSpraying`
+    bool, so the left arm and legs keep playing the Base Layer's idle/walk animation uninterrupted.
+- `PlayerAnimationController.cs` is the only thing that writes to the Animator: `MoveSpeed` comes
+  from `PlayerMovementController.NormalizedHorizontalSpeed`, and `IsSpraying` mirrors
+  `PaintGunFireController.FireStarted`/`FireStopped` — so the pose always reflects the same
+  movement/firing state the rest of the game already uses.
+
+**To test:** press Play — the character should idle, blend into the walk animation while moving,
+and raise the blaster with its right arm for as long as Fire is held (releasing Fire, running out
+of paint, leaving the target, or completing the level all return it to idle/walk).
 
 ## Level Completion (Stage 10)
 

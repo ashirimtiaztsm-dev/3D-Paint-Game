@@ -4,6 +4,54 @@ All notable changes to this project are documented in this file, derived from th
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); this project does not yet
 use version numbers, so entries are grouped by date/commit instead.
 
+## 2026-07-29 — Stage 11: character, blaster, and animation integration
+
+- Replaced the placeholder capsule `CharacterVisual` (deactivated, not deleted) with an instance of
+  the vendor `MaleCharacterPBR` prefab (`Assets/RPG Tiny Hero Duo/Prefab/MaleCharacterPBR.prefab`,
+  Humanoid rig, valid Avatar) under `Player/PlayerVisualRoot`. Corrected its local rotation
+  (`+180°` Y — the model's visual front faces `-Z` at identity rotation) and local position
+  (`+0.05` Y) so it faces `PlayerVisualRoot.forward` and its feet sit exactly on the ground instead
+  of clipping ~5cm below it.
+- Removed the vendor character's `weapon_l` (held a `Shield08` mesh) and `weapon_r` (held an
+  `OHS03` one-handed-sword mesh) by deactivating both socket transforms — they are plain prop
+  attachment points (`Transform` only, not humanoid-mapped bones), so this cannot affect the Avatar
+  or produce missing-transform Animator errors.
+- Added `RightHandWeaponSocket` as a child of the `hand_r` bone, and reparented the existing
+  `PaintGun` (with its `PaintSprayer`, `SprayOrigin`, `SprayParticles`, `PaintContainerVisual`, and
+  the old placeholder `GunVisual`) onto it — replacing the old static `GunMount` anchor (now
+  deleted) so the gun follows hand animation. Instantiated `Cosmic_Retro_Blaster_1` inside
+  `PaintGun` as the new visible gun model and deactivated the old placeholder `GunVisual` box.
+  Nudged `SprayOrigin`'s local position to the blaster's muzzle (from the prefab's own render
+  bounds); its existing forward-and-down aim direction was kept unchanged.
+- Created `Assets/ColorGame/Animations/Controllers/MaleCharacterPlayer.controller`:
+  - Parameters `MoveSpeed` (float) and `IsSpraying` (bool).
+  - Base Layer: a 1D Blend Tree on `MoveSpeed` (`Idle_Normal_SwordAndShield` at 0,
+    `MoveFWD_Normal_InPlace_SwordAndShield` at 1 — both already looping, Humanoid-compatible clips
+    from the same character pack, used unmodified).
+  - `RightArmSpray` layer (Override, weight 1, masked by the new
+    `Assets/ColorGame/Animations/Masks/RightArmSpray.mask`): `Empty` ↔ `SprayDefend`
+    (`Defend_SwordAndShield`) on `IsSpraying`, no exit time, 0.08s / 0.12s transitions.
+  - `SprayDefend` has **Mirror enabled** — verified by comparing the clip's humanoid muscle-curve
+    ranges (no Play-mode preview was available): the left-arm curves sum to a larger range (0.416)
+    than the right-arm curves (0.329), consistent with a shield-block pose authored left-dominant;
+    mirroring puts the dominant motion on the right arm, which the mask then isolates.
+  - Assigned to the character's existing `Animator` (already Humanoid/valid-Avatar/
+    `CullUpdateTransforms`/`Normal` update mode out of the box); set `applyRootMotion` to `false`.
+- Added `PlayerAnimationController.cs` (`Player` root) — drives `MoveSpeed` from
+  `PlayerMovementController.NormalizedHorizontalSpeed` (damped) and `IsSpraying` from
+  `PaintGunFireController.FireStarted`/`FireStopped`; resets `IsSpraying` in `OnDisable`. Reads no
+  input directly and performs no firing/paint logic itself.
+- Added read-only animation-facing properties to `PlayerMovementController`: `HorizontalSpeed`,
+  `NormalizedHorizontalSpeed`, `IsMoving`. `SetMovementEnabled(false)` continues to zero
+  `horizontalVelocity` immediately, unchanged from Stage 10.
+- Saved the configured character (visual + Animator + controller + socket + blaster) as a **Prefab
+  Variant** of the original: `Assets/ColorGame/Prefabs/Player/MaleCharacterPlayer.prefab`. The
+  original `MaleCharacterPBR.prefab` and `Cosmic_Retro_Blaster_1.prefab` source assets were never
+  modified. Gameplay components (`PlayerMovementController`, `PaintFillController`,
+  `PaintGunFireController`, etc.) remain on the scene `Player` root, unchanged.
+- Kept the `CharacterController` (`height` 1.8, `center` (0, 0.9, 0)) as-is — the new character's
+  standing bounds (~1.6m) fit comfortably inside it; no clipping or excess extension.
+
 ## 2026-07-28 — Stage 10: basic level-complete panel
 
 - Added `LevelCompleteController` (on the `Canvas` GameObject, alongside `MobileControlLayout` —

@@ -24,6 +24,16 @@ public class PlayerMovementController : MonoBehaviour
     private float verticalVelocity;
     private bool movementEnabled = true;
 
+    // Read-only animation-facing state, computed from the actual horizontalVelocity (never from
+    // raw joystick input) — reflects real acceleration/deceleration, not just intent.
+    public float HorizontalSpeed => horizontalVelocity.magnitude;
+
+    public float NormalizedHorizontalSpeed => moveSpeed > 0f
+        ? Mathf.Clamp01(horizontalVelocity.magnitude / moveSpeed)
+        : 0f;
+
+    public bool IsMoving => horizontalVelocity.sqrMagnitude > 0.0025f;
+
     private void Awake()
     {
         characterController = GetComponent<CharacterController>();

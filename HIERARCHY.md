@@ -35,6 +35,49 @@ Assets/
 
 > Note: the game-specific folder was renamed from `#Paint Game/` to `ColorGame/` and restructured
 > into the `Scripts/<System>/` layout above (see [CHANGELOG.md](CHANGELOG.md), 2026-07-27).
+> Stage 11 (2026-07-29) added `ColorGame/Animations/{Controllers,Masks,Clips}` and
+> `ColorGame/Prefabs/Player/`, plus the vendor packs `RPG Tiny Hero Duo/` and
+> `Cosmic_Retro_Blasters Pack_1_FREE/` at the `Assets/` root.
+
+## Scene Player Hierarchy (`Assets/Scenes/SampleScene.unity`) — Stage 11
+
+`Player`'s `CharacterController` and gameplay components are unchanged from earlier stages; only
+`PlayerVisualRoot`'s contents changed. Bone names below are the actual `MaleCharacterPBR` skeleton
+(a UE4/Mixamo-style Humanoid rig), truncated to the path that matters:
+
+```
+Player                                (CharacterController, MobileInputReader,
+                                        PlayerMovementController, PlayerInteractionDetector,
+                                        PaintGunReservoir, PaintFillController,
+                                        PaintGunFireController, PlayerAnimationController)
+├── InteractionOrigin
+├── CameraTarget
+└── PlayerVisualRoot                  (rotated by PlayerMovementController; PlayerMovementController
+   │                                   .characterVisual points HERE, never at a bone or mesh)
+    ├── CharacterVisual               (old placeholder capsule — deactivated, kept for reference)
+    └── MaleCharacterPlayer instance  (MaleCharacterPlayer.prefab variant; Animator here)
+        └── root/pelvis/spine_01/spine_02/spine_03/
+            ├── clavicle_l/upperarm_l/lowerarm_l/hand_l/
+            │   └── weapon_l                        (deactivated — held Shield08, a static prop mesh)
+            └── clavicle_r/upperarm_r/lowerarm_r/hand_r/
+                ├── weapon_r                        (deactivated — held OHS03, a static prop mesh)
+                └── RightHandWeaponSocket            (new — local identity relative to hand_r)
+                    └── PaintGun                     (PaintSprayer — unchanged gameplay object)
+                        ├── Cosmic_Retro_Blaster_1   (new — visible gun model)
+                        ├── PaintContainerVisual     (PaintGunVisual — unchanged)
+                        ├── GunVisual                (old placeholder box — deactivated)
+                        ├── SprayOrigin              (unchanged rotation; nudged to the new muzzle)
+                        └── SprayParticles           (unchanged)
+```
+
+`ImpactParticles` intentionally stays on `PaintTarget_Test` (not moved under `PaintGun`) — it marks
+where paint lands on the *target*, not where it leaves the gun, and moving it would have altered
+working impact-effect placement outside this stage's scope.
+
+`MaleCharacterPlayer` instance corrections applied on top of the vendor prefab (all on the
+instance/variant, never on `MaleCharacterPBR.prefab` itself): local rotation `(0, 180, 0)` — the
+model's visual front faces `-Z` at identity rotation, opposite `PlayerVisualRoot.forward` — and
+local position `(0, 0.05, 0)` to lift the feet exactly onto the ground (bounds showed a ~5cm clip).
 
 ## Scene Canvas Hierarchy (`Assets/Scenes/SampleScene.unity`)
 
@@ -155,6 +198,41 @@ LevelCompletePanel.SetActive(true)  (re-asserted as last Canvas sibling)
 (`playerMovementController`, `mobileInputReader`, `orbitCamera`, `fillController`,
 `fireController`, `contextualActionUI`) — all on `Player`, `Main Camera`, or `Canvas/ActionButtons`
 as listed elsewhere in this document.
+
+### Character Animation (Stage 11)
+
+```
+PlayerMovementController.horizontalVelocity
+      │ NormalizedHorizontalSpeed (read-only property, damped by PlayerAnimationController)
+      ▼
+PlayerAnimationController (Player/)
+      │ animator.SetFloat("MoveSpeed", ..., movementDampTime, Time.deltaTime)
+      ▼
+Animator (MaleCharacterPlayer instance) ── Base Layer: 1D Blend Tree on MoveSpeed
+      │                                     0 → Idle_Normal_SwordAndShield
+      │                                     1 → MoveFWD_Normal_InPlace_SwordAndShield
+      ▼
+Character skeleton (all bones, Base Layer weight 1, Override)
+
+PaintGunFireController.FireStarted / FireStopped
+      │
+      ▼
+PlayerAnimationController
+      │ animator.SetBool("IsSpraying", true/false)
+      ▼
+Animator ── RightArmSpray Layer (Override, weight 1, masked by RightArmSpray.mask)
+      │        Empty ──IsSpraying==true, 0.08s──▶ SprayDefend (Defend_SwordAndShield, mirrored)
+      │        SprayDefend ──IsSpraying==false, 0.12s──▶ Empty
+      ▼
+Right arm/fingers bones only (mask excludes everything else — left arm and legs keep
+following the Base Layer's idle/walk pose uninterrupted) ──▶ RightHandWeaponSocket ──▶
+PaintGun (+ Cosmic_Retro_Blaster_1) follows the animated hand every frame
+```
+
+`PlayerAnimationController`'s serialized references: `animator` (on the `MaleCharacterPlayer`
+instance), `movementController` (`Player`'s `PlayerMovementController`), `fireController`
+(`Player`'s `PaintGunFireController`) — all on `Player` or its `PlayerVisualRoot` subtree, no
+`GameObject.Find`/`FindObjectOfType` anywhere in the chain.
 
 ### Shared Data Types
 
