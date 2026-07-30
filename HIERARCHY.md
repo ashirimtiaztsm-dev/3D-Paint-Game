@@ -154,7 +154,7 @@ PaintGunFireController ──ConsumePaint()──▶ PaintGunReservoir
 PaintSprayer (Paint/) ──requires CanReceivePaint──▶ PaintSurfaceMarker (Paint/)
       │ SprayHitReceived (PaintSprayHit)
       ▼
-PaintableSurface (Paint/) ──Graphics.Blit──▶ PaintBrush.shader
+PaintableSurface (Paint/) ──Graphics.Blit──▶ PaintBrush.shader (+ _BrushNoiseTex edge noise)
       │ masked by
       ▼
 PaintTargetMaskProvider (Paint/) ──reads──▶ PaintTargetDefinition (ScriptableObject)
@@ -165,6 +165,28 @@ PaintCoverageTracker (Paint/)
       │ OverallProgressChanged / RegionProgressChanged / Completed
       ▼
 PaintProgressUI (UI/) ──instantiates──▶ PaintRegionProgressRow (UI/)
+```
+
+### Liquid Paint Polish & Target Guide
+
+```
+PaintTargetMaskProvider.RebuildMasks() (Awake / target change — never per-frame)
+      │ same first-region-owns pass that builds the allowed masks
+      ├──▶ allowedMasksByColorId[] (unchanged — clips PaintBrush.shader stamps)
+      └──▶ GuideTexture (RGBA32: RGB = region DisplayColor, alpha = interior/boundary)
+                │ MasksRebuilt event
+                ▼
+PaintableSurface.ApplyGuideTexture() ──MaterialPropertyBlock──▶ _TargetGuideTex / _HasTargetGuide
+      │ (also sets _PaintTex, _BaseMap, _LiquidNoiseTex — property block only, no runtime Material)
+      ▼
+PaintableSurface.shader (per-pixel, Frag)
+      ├─ 5-tap _PaintTex alpha gradient ──▶ fake raised normal ──▶ specular highlight + wet edge rim
+      ├─ _LiquidNoiseTex (scrolling, painted areas only) ──▶ subtle liquid shimmer
+      └─ _TargetGuideTex, gated by _HasTargetGuide, faded by (1 - paintAlpha) ──▶ pre-paint guide overlay
+
+PaintSprayer.ShowImpact() ──on color change/first contact──▶ ImpactParticles.Emit(contactPulseParticleCount)
+      (reuses the existing ImpactParticles system — droplet/splash tuning, shrinks over lifetime)
+SprayParticles renderer.renderMode = Stretch (velocity-aligned) for a tighter liquid stream
 ```
 
 ### Level Completion (Stage 10)

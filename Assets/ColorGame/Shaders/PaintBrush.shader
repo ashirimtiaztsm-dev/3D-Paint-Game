@@ -9,6 +9,11 @@ Shader "Hidden/ColorGame/PaintBrush"
         _BrushColor ("Brush Color", Color) = (1, 1, 1, 1)
         _BrushOpacity ("Brush Opacity", Range(0, 1)) = 1
         _AllowedMask ("Allowed Paint Mask", 2D) = "black" {}
+
+        [Header(Organic Edge Noise)]
+        _BrushNoiseTex ("Brush Edge Noise", 2D) = "white" {}
+        _BrushNoiseScale ("Brush Edge Noise Scale", Float) = 8
+        _BrushNoiseStrength ("Brush Edge Noise Strength", Range(0, 1)) = 0
     }
 
     SubShader
@@ -30,12 +35,16 @@ Shader "Hidden/ColorGame/PaintBrush"
             SAMPLER(sampler_MainTex);
             TEXTURE2D(_AllowedMask);
             SAMPLER(sampler_AllowedMask);
+            TEXTURE2D(_BrushNoiseTex);
+            SAMPLER(sampler_BrushNoiseTex);
 
             float4 _BrushUV;
             float _BrushRadius;
             float _BrushHardness;
             half4 _BrushColor;
             float _BrushOpacity;
+            float _BrushNoiseScale;
+            float _BrushNoiseStrength;
 
             struct Attributes
             {
@@ -63,9 +72,17 @@ Shader "Hidden/ColorGame/PaintBrush"
 
                 float distanceFromBrush = distance(input.uv, _BrushUV.xy);
                 float innerRadius = _BrushRadius * saturate(_BrushHardness);
+
+                // Organic edge: perturb only the outer radius, sampled from a fixed noise texture in
+                // surface UV space so a given point on the surface always gets the same offset (no
+                // per-frame shimmer). Center of the stamp (inside innerRadius) stays perfectly solid.
+                float edgeNoise = SAMPLE_TEXTURE2D(_BrushNoiseTex, sampler_BrushNoiseTex, input.uv * _BrushNoiseScale).r - 0.5;
+                float noiseInfluence = smoothstep(innerRadius * 0.5, innerRadius, distanceFromBrush);
+                float outerRadius = max(innerRadius + 0.00001, _BrushRadius + edgeNoise * noiseInfluence * _BrushNoiseStrength * _BrushRadius);
+
                 float mask = 1.0 - smoothstep(
                     innerRadius,
-                    max(innerRadius + 0.00001, _BrushRadius),
+                    outerRadius,
                     distanceFromBrush);
 
                 // Per-pixel target clipping: a stamp can straddle more than one region, so this must be

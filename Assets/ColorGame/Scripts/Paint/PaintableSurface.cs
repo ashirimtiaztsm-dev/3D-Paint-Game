@@ -14,6 +14,12 @@ public class PaintableSurface : MonoBehaviour
     private static readonly int BrushColorId = Shader.PropertyToID("_BrushColor");
     private static readonly int BrushOpacityId = Shader.PropertyToID("_BrushOpacity");
     private static readonly int AllowedMaskId = Shader.PropertyToID("_AllowedMask");
+    private static readonly int BrushNoiseTexId = Shader.PropertyToID("_BrushNoiseTex");
+    private static readonly int BrushNoiseStrengthId = Shader.PropertyToID("_BrushNoiseStrength");
+
+    private static readonly int LiquidNoiseTexId = Shader.PropertyToID("_LiquidNoiseTex");
+    private static readonly int TargetGuideTexId = Shader.PropertyToID("_TargetGuideTex");
+    private static readonly int HasTargetGuideId = Shader.PropertyToID("_HasTargetGuide");
 
     [Header("References")]
     [SerializeField] private PaintSurfaceMarker marker;
@@ -21,6 +27,11 @@ public class PaintableSurface : MonoBehaviour
     [SerializeField] private Shader brushShader;
     [SerializeField] private Texture2D baseTexture;
     [SerializeField] private PaintTargetMaskProvider maskProvider;
+
+    [Header("Liquid Paint Polish")]
+    [SerializeField] private Texture2D liquidNoiseTexture;
+    [SerializeField] private Texture2D brushNoiseTexture;
+    [SerializeField, Range(0f, 1f)] private float brushNoiseStrength = 0.4f;
 
     [Header("Texture")]
     [SerializeField] private int textureResolution = 512;
@@ -44,6 +55,7 @@ public class PaintableSurface : MonoBehaviour
     private bool hasPreviousStrokeUV;
     private Vector2 previousStrokeUV;
     private Texture lastSetAllowedMask;
+    private bool warnedMissingGuide;
 
     public RenderTexture PaintTexture => currentPaintTexture;
     public bool IsInitialized { get; private set; }
@@ -68,18 +80,37 @@ public class PaintableSurface : MonoBehaviour
         propertyBlock = new MaterialPropertyBlock();
         brushMaterial = new Material(brushShader) { hideFlags = HideFlags.HideAndDontSave };
 
+        if (brushNoiseTexture != null)
+        {
+            brushMaterial.SetTexture(BrushNoiseTexId, brushNoiseTexture);
+            brushMaterial.SetFloat(BrushNoiseStrengthId, brushNoiseStrength);
+        }
+        else
+        {
+            Debug.LogWarning($"{nameof(PaintableSurface)} on '{name}' has no {nameof(brushNoiseTexture)} assigned — brush edges will be perfectly round.", this);
+        }
+
         currentPaintTexture = CreatePaintRenderTexture();
         workingPaintTexture = CreatePaintRenderTexture();
 
         ClearRenderTexture(currentPaintTexture, initialClearColor);
         ClearRenderTexture(workingPaintTexture, initialClearColor);
 
+        surfaceRenderer.GetPropertyBlock(propertyBlock);
+
         if (baseTexture != null)
-        {
-            surfaceRenderer.GetPropertyBlock(propertyBlock);
             propertyBlock.SetTexture(BaseMapPropertyId, baseTexture);
-            surfaceRenderer.SetPropertyBlock(propertyBlock);
+
+        if (liquidNoiseTexture != null)
+        {
+            propertyBlock.SetTexture(LiquidNoiseTexId, liquidNoiseTexture);
         }
+        else
+        {
+            Debug.LogWarning($"{nameof(PaintableSurface)} on '{name}' has no {nameof(liquidNoiseTexture)} assigned — painted surfaces will not show liquid noise.", this);
+        }
+
+        surfaceRenderer.SetPropertyBlock(propertyBlock);
 
         IsInitialized = true;
         ApplyPaintTextureToRenderer();
@@ -89,6 +120,8 @@ public class PaintableSurface : MonoBehaviour
     {
         if (maskProvider != null)
             maskProvider.MasksRebuilt += HandleMasksRebuilt;
+
+        ApplyGuideTexture();
 
         if (marker == null)
             return;
@@ -203,6 +236,32 @@ public class PaintableSurface : MonoBehaviour
         // never let a stroke that started under the old target bridge into the newly rebuilt one.
         lastSetAllowedMask = null;
         hasPreviousStrokeUV = false;
+
+        ApplyGuideTexture();
+    }
+
+    // Pushes (or clears) the persistent target-guide texture. Built once by the mask provider on
+    // Awake/RebuildMasks — never generated or sampled here, only referenced.
+    private void ApplyGuideTexture()
+    {
+        if (surfaceRenderer == null || propertyBlock == null)
+            return;
+
+        bool hasGuide = maskProvider != null && maskProvider.HasGuideTexture;
+
+        surfaceRenderer.GetPropertyBlock(propertyBlock);
+
+        if (hasGuide)
+            propertyBlock.SetTexture(TargetGuideTexId, maskProvider.GuideTexture);
+
+        propertyBlock.SetFloat(HasTargetGuideId, hasGuide ? 1f : 0f);
+        surfaceRenderer.SetPropertyBlock(propertyBlock);
+
+        if (!hasGuide && !warnedMissingGuide && maskProvider != null)
+        {
+            warnedMissingGuide = true;
+            Debug.LogWarning($"{nameof(PaintableSurface)} on '{name}': {nameof(maskProvider)} has no guide texture yet — target guide will not be shown.", this);
+        }
     }
 
     private void StampAt(Vector2 uv, PaintColorDefinition paint, float opacity, Texture allowedMask)

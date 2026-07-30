@@ -16,6 +16,9 @@ public class PaintSprayer : MonoBehaviour
     [SerializeField] private float impactNormalOffset = 0.02f;
     [SerializeField] private bool debugRay;
 
+    [Header("Contact Pulse")]
+    [SerializeField, Range(0, 32)] private int contactPulseParticleCount = 6;
+
     private bool impactVisible;
     private PaintColorDefinition lastSprayPaint;
     private PaintColorDefinition lastImpactPaint;
@@ -121,7 +124,9 @@ public class PaintSprayer : MonoBehaviour
 
         // Only clear on an actual colour change, never every frame — this runs once per hit frame
         // while actively spraying, and most of those frames keep the same colour as the last one.
-        if (lastImpactPaint != paint)
+        bool isNewContact = lastImpactPaint != paint;
+
+        if (isNewContact)
         {
             impactParticles.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
             lastImpactPaint = paint;
@@ -131,6 +136,11 @@ public class PaintSprayer : MonoBehaviour
 
         if (!impactParticles.isPlaying)
             impactParticles.Play();
+
+        // Small one-off pulse right as the stream first lands (or changes colour): reuses the
+        // existing impact system, no new particle system, no UI/shake/sound.
+        if (isNewContact && contactPulseParticleCount > 0)
+            impactParticles.Emit(contactPulseParticleCount);
 
         impactVisible = true;
     }

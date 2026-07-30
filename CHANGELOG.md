@@ -4,6 +4,43 @@ All notable changes to this project are documented in this file, derived from th
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); this project does not yet
 use version numbers, so entries are grouped by date/commit instead.
 
+## 2026-07-30 — Liquid paint polish and visible target guide
+
+- **Target guide**: `PaintTargetMaskProvider` now also builds a persistent `GuideTexture`
+  (RGBA32, region `DisplayColor` in RGB, low alpha interior / high alpha boundary) in the same
+  `RebuildMasks()` pass that builds the allowed masks — built once, never per-frame, using the same
+  first-region-owns policy as `PaintCoverageTracker`, resampled onto a shared resolution so
+  differently-sized region masks (`HeartLeftMask_Test` / `HeartRightMask_Test`) still combine
+  correctly. Exposed as `GuideTexture`/`HasGuideTexture`.
+- **`PaintableSurface.shader` rewritten** from a flat unlit blend into a lit-ish liquid-paint
+  look: a 5-tap `_PaintTex` alpha gradient fakes a raised normal for a Blinn-Phong specular
+  highlight (glossy only where painted) and a wet meniscus rim light at paint edges; a slow
+  scrolling liquid noise tint on painted areas only (no-op with the default neutral-gray texture);
+  and the new target-guide overlay, gated by an explicit `_HasTargetGuide` toggle so a missing
+  guide texture never shows a black/incorrect default, fading out under paint via
+  `guideAlpha * _GuideOpacity * (1 - paintAlpha)`.
+- **`PaintBrush.shader`**: brush outer radius is now perturbed by a fixed noise texture sampled in
+  surface UV space, concentrated near the stamp's edge only (center stays solid); `_AllowedMask`
+  remains the final gate, so noise cannot leak paint across regions. Default noise strength is `0`
+  (no visual change) until a noise texture is explicitly assigned.
+- Generated [LiquidPaintNoise.png](Assets/ColorGame/Textures/Paint/LiquidPaintNoise.png) (256×256
+  seamless grayscale value noise) once via editor script — not at runtime — and wired it into both
+  the liquid surface noise and the brush edge noise on `PaintTarget_Test/PaintSurface`.
+- `PaintableSurface.cs`: added serialized `liquidNoiseTexture`/`brushNoiseTexture` refs and wired
+  `_TargetGuideTex`/`_HasTargetGuide`/`_LiquidNoiseTex` through the existing
+  `MaterialPropertyBlock` only (no `renderer.material`, no new runtime `Material` for the surface
+  renderer). Missing guide/noise textures log one warning each and disable that effect — no white
+  or magenta fallback.
+- `ImpactParticles` tuned for a droplet/splash feel (shorter lifetime, mild gravity, speed/size
+  variance, shrinks to zero over its lifetime); `SprayParticles` now renders as a stretched
+  billboard along velocity for a tighter stream look. `PaintSprayer.cs` fires one small
+  `impactParticles.Emit(...)` burst the instant the stream first lands or changes color, as a
+  lightweight contact pulse (no new particle system, no UI, no shake, no sound). Both particle
+  systems continue to share the existing `PaintSprayParticle.mat`, unchanged.
+- Did not modify `PaintCoverageTracker.cs`, `PaintTargetDefinition.cs`, or any progress/win-panel/
+  movement/animation script — this stage is purely visual polish on top of the existing painting
+  and target systems.
+
 ## 2026-07-30 — Fix: walk animation not playing at all (regression from LocomotionPlaybackSpeed)
 
 - **Regression**: after the previous locomotion fix, the character stopped visibly animating

@@ -158,6 +158,62 @@ particles lingering.
 **To test:** fill red, fire, confirm red spray/impact particles; fill blue, fire, confirm blue
 spray/impact particles with no leftover red particles from the previous session.
 
+`ImpactParticles` now shrinks to nothing over its (shorter) lifetime, has mild gravity and
+speed/size variance for a droplet/splash feel, and `PaintSprayer` fires one small extra
+`impactParticles.Emit(...)` burst the moment the stream first lands (or changes color) as a
+lightweight contact pulse — no new particle system, no UI, no screen shake, no sound.
+`SprayParticles` renders as a stretched billboard along its velocity for a tighter, more liquid
+stream look. Both continue to share the existing
+[PaintSprayParticle.mat](Assets/ColorGame/Materials/Particles/PaintSprayParticle.mat) — it was not
+replaced.
+
+## Liquid Paint & Target Guide
+
+Two additions polish the painting feel without changing gameplay rules (fill/fire, paint
+restriction, progress, or win panel):
+
+- **Target guide (`PaintTargetMaskProvider`)** — builds a persistent `GuideTexture` once, in the
+  same `RebuildMasks()` pass that already builds the per-color allowed masks (never per-frame,
+  never touched while spraying). It's an RGBA32 texture where RGB is the owning region's
+  `DisplayColor` and alpha is low (interior, ~0.18) or high (boundary, detected via 4-neighbor
+  ownership comparison) — same first-region-owns policy as `PaintCoverageTracker`, resampled onto a
+  shared `guideResolution` grid so regions with differently sized mask textures (e.g.
+  `HeartLeftMask_Test` vs `HeartRightMask_Test`) still combine into one texture. `PaintableSurface`
+  reads it only through `PaintTargetMaskProvider.GuideTexture`/`HasGuideTexture` — it never
+  generates or samples pixels itself.
+- **Liquid surface shader (`PaintableSurface.shader`)** — still a single-pass custom URP forward
+  shader, now with: a cheap fake raised-normal (5-tap gradient of `_PaintTex` alpha via
+  `_PaintTex_TexelSize`) driving a Blinn-Phong specular highlight that only strengthens where paint
+  is applied (`_PaintSmoothness`/`_PaintSpecularStrength`, blended against `_BaseSmoothness` for the
+  untouched surface); a wet "meniscus" rim light at the same alpha-gradient edges
+  (`_PaintEdgeHighlightStrength`/`_PaintEdgeWidth`); a subtle slow-scrolling liquid noise tint on
+  painted areas only (`_LiquidNoiseTex`/`_LiquidNoiseScale`/`_LiquidNoiseStrength`/
+  `_LiquidNoiseSpeed`, neutral gray default = no-op if unassigned); and the target-guide overlay,
+  gated by an explicit `_HasTargetGuide` toggle (not texture-default alpha) and faded out under
+  paint via `guideAlpha * _GuideOpacity * (1 - paintAlpha)`, so it disappears as a region is
+  actually painted.
+- **Organic brush edges (`PaintBrush.shader`)** — the brush's outer radius is perturbed per-pixel by
+  a fixed noise texture sampled in surface UV space (so a given point on the surface always gets
+  the same offset — no per-frame shimmer), concentrated near the edge only via a
+  `smoothstep(innerRadius*0.5, innerRadius, distance)` mask; the center of every stamp stays
+  perfectly solid, and `_AllowedMask` remains the final, authoritative gate — noise cannot leak
+  paint across regions.
+- A single generated texture, [LiquidPaintNoise.png](Assets/ColorGame/Textures/Paint/LiquidPaintNoise.png)
+  (256×256 seamless grayscale value noise, generated once via editor script, not at runtime), is
+  reused for both the liquid surface noise and the brush edge noise on `PaintTarget_Test/PaintSurface`.
+- `PaintableSurface.cs` assigns every runtime texture (`_PaintTex`, `_TargetGuideTex`,
+  `_LiquidNoiseTex`) through the existing `MaterialPropertyBlock` only — no `renderer.material`, no
+  new runtime `Material` for the surface renderer (the brush's off-screen Blit material,
+  `brushMaterial`, is the same pre-existing utility material pattern used since this system was
+  first built). Missing guide/noise texture references log one warning each and fall back to
+  "effect disabled", never a white or magenta artifact.
+
+**To test:** enter Play before painting anything — the heart target should show a faint tinted
+outline (red half / blue half) with a brighter rim at the seam; spray red, and the guide under the
+red region should fade out as coverage increases while the painted area gains a glossy highlight
+and faint liquid shimmer; brush stamp edges should look slightly irregular rather than perfectly
+circular.
+
 ## Level Completion (Stage 10)
 
 When every required region of the active target (`PaintTargetDefinition`) reaches its completion

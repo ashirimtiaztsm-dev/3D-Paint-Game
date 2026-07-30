@@ -27,12 +27,32 @@ Material:
         m_Texture: {fileID: 2800000, guid: 2843f34747e7c1d4f8d71379b4b73206, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
+    - _LiquidNoiseTex:
+        m_Texture: {fileID: 2800000, guid: 57f2bf7d83aa1b54eb45bbdc5fb076d2, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     - _PaintTex:
         m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
+    - _TargetGuideTex:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     m_Ints: []
-    m_Floats: []
+    m_Floats:
+    - _BaseSmoothness: 0.15
+    - _GuideOpacity: 1
+    - _GuideOutlineStrength: 0.6
+    - _HasTargetGuide: 0
+    - _LiquidNoiseScale: 6
+    - _LiquidNoiseSpeed: 0.04
+    - _LiquidNoiseStrength: 0.1
+    - _PaintEdgeHighlightStrength: 1.6
+    - _PaintEdgeWidth: 0.02
+    - _PaintNormalStrength: 0.6
+    - _PaintSmoothness: 0.78
+    - _PaintSpecularStrength: 1.3
     m_Colors:
     - _BaseColor: {r: 1, g: 1, b: 1, a: 1}
   m_BuildTextureStacks: []
