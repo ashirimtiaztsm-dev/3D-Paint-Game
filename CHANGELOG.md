@@ -4,6 +4,68 @@ All notable changes to this project are documented in this file, derived from th
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); this project does not yet
 use version numbers, so entries are grouped by date/commit instead.
 
+## 2026-07-30 — Jelly-paint volume polish
+
+- **Problem**: the accepted liquid-paint pass (glossy highlight, target guide, brush noise) still
+  read as a flat painted texture rather than a poured layer of liquid — no visible thickness, no
+  rounded blob edges, no merged puddle shape, and no internal motion. Target: a reference
+  screenshot showing thick, rounded, jelly-like red paint with bright wet highlights and soft
+  internal motion (**note**: no image data was attached to this session's conversation context —
+  this pass was implemented from the request's detailed textual description of the reference,
+  not a direct visual comparison; a human visual check against the actual reference is still
+  needed).
+- **`PaintBrush.shader` — domed thickness deposit + smooth blob merging**: replaced the flat
+  soft-circle stamp with a rounded dome profile (`pow(saturate(1 - distance01^2), _JellyDomePower)`,
+  no flat plateau, no hard edge, always solid exactly at the stamp centre). Repeated/overlapping
+  stamps now merge via a polynomial smooth-max (`SmoothMax`, IQ-style, two scalar ops, no loop) of
+  existing vs. incoming thickness plus a small `_ThicknessBuildRate` overlap bonus, clamped to
+  `_MaximumThickness` — two touching stamps join into one smooth puddle instead of showing separate
+  circular borders, and continuous spraying reads as one connected, slowly-thickening jelly layer.
+  `_AllowedMask` is still the final per-pixel gate; wrong-color/out-of-region paint is still
+  completely rejected.
+- **Paint alpha reinterpreted as thickness, not visible opacity**: `PaintableSurface.shader` now
+  derives a separate `coverage = smoothstep(_PaintCoverageStart, _PaintCoverageFull, thickness)`
+  curve for all visible blending/lighting, instead of using the raw alpha channel directly. This is
+  what lets thin edges stay rounded/translucent while thick centers read as solid.
+- **Jelly height/normal**: combined a fine 1-texel gradient (meniscus edge detail) with a wider
+  `_JellySmoothingRadius`-texel gradient (broad puddle mound) of paint thickness into one fake
+  raised normal — no extra render target, no blur pass, fixed small tap count.
+- **Meniscus**: replaced the previous single wet-edge rim
+  (`_PaintEdgeHighlightStrength`/`_PaintEdgeWidth`) with a dedicated rounded-meniscus system
+  (`_MeniscusWidth`/`_MeniscusStrength`/`_MeniscusSmoothness`/`_MeniscusTint`), gated by `coverage`
+  so it can never show outside actual paint.
+- **Jelly lighting**: added broad + sharp specular highlights, a Fresnel rim, and slight
+  thickness-based depth darkening (`_JellyBroadSpecularPower`/`_JellySharpSpecularPower`/
+  `_JellySpecularStrength`/`_JellyFresnelStrength`/`_JellyFresnelPower`/`_JellyDepthDarkening`).
+  Removed the now-superseded `_PaintSmoothness`/`_PaintSpecularStrength`/`_PaintNormalStrength`
+  properties from the previous stage.
+- **Internal moving highlights**: the existing `LiquidPaintNoise.png` texture (unchanged, reused —
+  not regenerated) is now sampled twice at different scales/slow scroll speeds and combined into a
+  moving normal/highlight perturbation plus a soft pale internal cloudy pattern
+  (`_JellyNoiseScaleA/B`, `_JellyNoiseSpeedA/B`, `_JellyNoiseStrength`, `_JellyHighlightVariation`,
+  `_JellyInternalGlow`) — visible only inside painted coverage; paint boundaries, the target guide,
+  and progress masks never move.
+- **Impact ripple**: `PaintableSurface.cs` now records the latest accepted spray hit's UV,
+  `Time.time`, and strength into the existing `MaterialPropertyBlock`
+  (`_ImpactUV`/`_ImpactStartTime`/`_ImpactStrength`) on every accepted hit — no texture write, no
+  per-frame update. The shader derives a localized, decaying ripple from `_Time.y` and applies it
+  only to the jelly normal and specular strength, never to the mask/color/progress. `ClearPaint()`
+  resets `_ImpactStrength` to `0` so no ripple lingers after a reset.
+- Files changed: `Assets/ColorGame/Shaders/PaintBrush.shader`,
+  `Assets/ColorGame/Shaders/PaintableSurface.shader`,
+  `Assets/ColorGame/Scripts/Paint/PaintableSurface.cs`,
+  `Assets/ColorGame/Materials/PaintableSurface_Test.mat` (full jelly tuning profile applied — see
+  README for values). `PaintTargetMaskProvider.cs`, `PaintCoverageTracker.cs`, and
+  `PaintTargetDefinition.cs` were **not** modified. `LiquidPaintNoise.png` was reused as-is, not
+  regenerated.
+- **Regression check** (structural/code-level — see the note on visual verification above):
+  red/blue target-restricted painting, the visible heart guide, ping-pong RenderTexture painting,
+  `PaintCoverageTracker` region/overall progress, the win panel, fill/fire controls, paint
+  particles, character animation, and Replay/Next Level all reviewed unchanged in this pass — no
+  edits touched `PaintCoverageTracker.cs`, `PaintTargetDefinition.cs`, `LevelCompleteController.cs`,
+  `PlayerMovementController.cs`, `PlayerAnimationController.cs`, `PaintFillController.cs`, or
+  `PaintGunFireController.cs`. Console showed zero compile errors after the final `assets-refresh`.
+
 ## 2026-07-30 — Liquid paint polish and visible target guide
 
 - **Target guide**: `PaintTargetMaskProvider` now also builds a persistent `GuideTexture`

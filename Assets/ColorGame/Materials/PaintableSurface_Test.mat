@@ -45,9 +45,37 @@ Material:
     - _GuideOpacity: 1
     - _GuideOutlineStrength: 0.6
     - _HasTargetGuide: 0
+    - _ImpactRippleDecay: 3
+    - _ImpactRippleFrequency: 90
+    - _ImpactRippleRadius: 0.18
+    - _ImpactRippleSpeed: 10
+    - _ImpactStartTime: -1000
+    - _ImpactStrength: 0
+    - _JellyBroadSpecularPower: 28
+    - _JellyDepthDarkening: 0.12
+    - _JellyFresnelPower: 4
+    - _JellyFresnelStrength: 0.3
+    - _JellyHeight: 0.9
+    - _JellyHighlightVariation: 0.12
+    - _JellyInternalGlow: 0.1
+    - _JellyNoiseScaleA: 5
+    - _JellyNoiseScaleB: 9
+    - _JellyNoiseSpeedA: 0.03
+    - _JellyNoiseSpeedB: 0.02
+    - _JellyNoiseStrength: 0.1
+    - _JellyNormalStrength: 6
+    - _JellySharpSpecularPower: 110
+    - _JellySmoothingRadius: 3
+    - _JellySmoothness: 0.92
+    - _JellySpecularStrength: 0.85
     - _LiquidNoiseScale: 6
     - _LiquidNoiseSpeed: 0.04
     - _LiquidNoiseStrength: 0.1
+    - _MeniscusSmoothness: 0.9
+    - _MeniscusStrength: 0.75
+    - _MeniscusWidth: 0.12
+    - _PaintCoverageFull: 0.2
+    - _PaintCoverageStart: 0.04
     - _PaintEdgeHighlightStrength: 1.6
     - _PaintEdgeWidth: 0.02
     - _PaintNormalStrength: 0.6
@@ -55,5 +83,7 @@ Material:
     - _PaintSpecularStrength: 1.3
     m_Colors:
     - _BaseColor: {r: 1, g: 1, b: 1, a: 1}
+    - _ImpactUV: {r: -10, g: -10, b: 0, a: 0}
+    - _MeniscusTint: {r: 1, g: 1, b: 1, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

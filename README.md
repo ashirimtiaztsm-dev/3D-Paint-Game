@@ -169,8 +169,9 @@ replaced.
 
 ## Liquid Paint & Target Guide
 
-Two additions polish the painting feel without changing gameplay rules (fill/fire, paint
-restriction, progress, or win panel):
+Two layers of polish sit on top of the painting system without changing gameplay rules (fill/fire,
+paint restriction, progress, or win panel): a visible pre-paint target guide, and a "jelly volume"
+look for applied paint.
 
 - **Target guide (`PaintTargetMaskProvider`)** — builds a persistent `GuideTexture` once, in the
   same `RebuildMasks()` pass that already builds the per-color allowed masks (never per-frame,
@@ -181,38 +182,101 @@ restriction, progress, or win panel):
   `HeartLeftMask_Test` vs `HeartRightMask_Test`) still combine into one texture. `PaintableSurface`
   reads it only through `PaintTargetMaskProvider.GuideTexture`/`HasGuideTexture` — it never
   generates or samples pixels itself.
-- **Liquid surface shader (`PaintableSurface.shader`)** — still a single-pass custom URP forward
-  shader, now with: a cheap fake raised-normal (5-tap gradient of `_PaintTex` alpha via
-  `_PaintTex_TexelSize`) driving a Blinn-Phong specular highlight that only strengthens where paint
-  is applied (`_PaintSmoothness`/`_PaintSpecularStrength`, blended against `_BaseSmoothness` for the
-  untouched surface); a wet "meniscus" rim light at the same alpha-gradient edges
-  (`_PaintEdgeHighlightStrength`/`_PaintEdgeWidth`); a subtle slow-scrolling liquid noise tint on
-  painted areas only (`_LiquidNoiseTex`/`_LiquidNoiseScale`/`_LiquidNoiseStrength`/
-  `_LiquidNoiseSpeed`, neutral gray default = no-op if unassigned); and the target-guide overlay,
-  gated by an explicit `_HasTargetGuide` toggle (not texture-default alpha) and faded out under
-  paint via `guideAlpha * _GuideOpacity * (1 - paintAlpha)`, so it disappears as a region is
-  actually painted.
-- **Organic brush edges (`PaintBrush.shader`)** — the brush's outer radius is perturbed per-pixel by
-  a fixed noise texture sampled in surface UV space (so a given point on the surface always gets
-  the same offset — no per-frame shimmer), concentrated near the edge only via a
-  `smoothstep(innerRadius*0.5, innerRadius, distance)` mask; the center of every stamp stays
-  perfectly solid, and `_AllowedMask` remains the final, authoritative gate — noise cannot leak
-  paint across regions.
-- A single generated texture, [LiquidPaintNoise.png](Assets/ColorGame/Textures/Paint/LiquidPaintNoise.png)
-  (256×256 seamless grayscale value noise, generated once via editor script, not at runtime), is
-  reused for both the liquid surface noise and the brush edge noise on `PaintTarget_Test/PaintSurface`.
-- `PaintableSurface.cs` assigns every runtime texture (`_PaintTex`, `_TargetGuideTex`,
-  `_LiquidNoiseTex`) through the existing `MaterialPropertyBlock` only — no `renderer.material`, no
-  new runtime `Material` for the surface renderer (the brush's off-screen Blit material,
-  `brushMaterial`, is the same pre-existing utility material pattern used since this system was
-  first built). Missing guide/noise texture references log one warning each and fall back to
-  "effect disabled", never a white or magenta artifact.
+- **Organic brush edges + jelly thickness deposit (`PaintBrush.shader`)** — each brush stamp now
+  deposits a rounded **dome** of thickness (`pow(saturate(1 - distance01^2), _JellyDomePower)`,
+  peaking at 1.0 exactly at the stamp centre, no flat plateau, no hard edge) instead of a flat
+  circle. The outer radius is still perturbed per-pixel by a fixed noise texture in surface UV
+  space (organic, non-shimmering edge). Repeated/overlapping stamps merge via a **polynomial
+  smooth-max** (`SmoothMax`, a two-line IQ-style smooth union — no loops, no exponentials) between
+  the existing and incoming thickness, plus a small `_ThicknessBuildRate` term so real overlap
+  builds slightly thicker paint, clamped to `_MaximumThickness`. `_AllowedMask` is still multiplied
+  in per-pixel as the final, authoritative gate — wrong-color/out-of-region paint is rejected
+  regardless of dome shape or noise.
+- **Paint alpha = jelly thickness, not visible opacity (`PaintableSurface.shader`)** — the paint
+  RenderTexture's alpha channel is still written by the brush shader above, but the surface shader
+  now treats it as a *thickness* field and derives a separate visual `coverage = smoothstep(
+  _PaintCoverageStart, _PaintCoverageFull, thickness)` for actual opacity/blending. This is what
+  keeps thin edges translucent/rounded while thick centers read as fully opaque, instead of a flat
+  uniform color the instant any paint lands.
+- **Jelly height/normal** — a locally-tight 4-tap gradient of paint thickness (1 texel, fine
+  meniscus edge) is combined with a much wider 4-tap gradient (`_JellySmoothingRadius` texels,
+  broad puddle mound) into one fake raised normal (`_JellyHeight`/`_JellyNormalStrength`) — no
+  extra render target, no per-frame blur pass, just two small fixed tap sets.
+- **Meniscus** — a rounded wet rim (`_MeniscusWidth`/`_MeniscusStrength`/`_MeniscusSmoothness`/
+  `_MeniscusTint`) driven by the local (fine) thickness gradient, multiplied by `coverage` so it can
+  never show outside actual paint.
+- **Jelly lighting** — broad + sharp Blinn-Phong specular (`_JellyBroadSpecularPower`/
+  `_JellySharpSpecularPower`/`_JellySpecularStrength`), a Fresnel rim (`_JellyFresnelStrength`/
+  `_JellyFresnelPower`), and slight thickness-based depth darkening (`_JellyDepthDarkening`) so
+  thick centers read as subtly deeper than raised edges. Red/blue paint color always comes from
+  `paint.rgb` (the brush color written by `PaintSprayer`), never recolored by lighting.
+  Supersedes the earlier single wet-edge/specular pass (old `_PaintSmoothness`/
+  `_PaintSpecularStrength`/`_PaintNormalStrength`/`_PaintEdgeHighlightStrength`/`_PaintEdgeWidth`
+  properties were removed in favor of the Jelly/Meniscus system above).
+- **Moving internal liquid pattern** — the existing
+  [LiquidPaintNoise.png](Assets/ColorGame/Textures/Paint/LiquidPaintNoise.png) texture is sampled
+  twice, at different scales and slow scroll speeds/directions (`_JellyNoiseScaleA/B`,
+  `_JellyNoiseSpeedA/B`), and combined into a subtle moving normal/highlight perturbation
+  (`_JellyNoiseStrength`/`_JellyHighlightVariation`) plus a soft pale internal cloudy pattern
+  (`abs(noiseA - noiseB)`, scaled by `_JellyInternalGlow`) visible only inside painted coverage.
+  Paint boundaries, the target guide, and progress masks never move — only the highlights do.
+- **Impact ripple** — `PaintableSurface.cs` records the latest accepted spray hit's UV, `Time.time`,
+  and strength (`PaintSprayHit.PaintAmount`) into the `MaterialPropertyBlock`
+  (`_ImpactUV`/`_ImpactStartTime`/`_ImpactStrength`) on every accepted hit — no texture write, no
+  per-frame update. The shader computes a localized, radially-falling-off, time-decaying ripple
+  from `_Time.y` and applies it only to the jelly normal and specular strength (never to the paint
+  mask, color, or progress), so spraying reads as a gentle, localized "contact wobble" that fades
+  out naturally after spraying stops. `ClearPaint()` also resets `_ImpactStrength` to 0 so no
+  ripple lingers after a reset.
+- `PaintableSurface.cs` assigns every runtime value (`_PaintTex`, `_TargetGuideTex`,
+  `_LiquidNoiseTex`, `_ImpactUV`/`_ImpactStartTime`/`_ImpactStrength`) through the existing
+  `MaterialPropertyBlock` only — no `renderer.material`, no new runtime `Material` for the surface
+  renderer (the brush's off-screen Blit material, `brushMaterial`, is the same pre-existing utility
+  material pattern used since this system was first built). Missing guide/noise texture references
+  log one warning each and fall back to "effect disabled", never a white or magenta artifact.
+
+**Current production baseline values** (`PaintableSurface_Test.mat`) — these are the approved
+tuning values; if they're ever changed during manual Play-mode tweaking, back up the material
+first (or note the values here) before experimenting, since there is no other record of the
+approved profile:
+
+| Property | Value |
+|---|---|
+| Paint Coverage Start (`_PaintCoverageStart`) | 0.04 |
+| Paint Coverage Full (`_PaintCoverageFull`) | 0.20 |
+| Jelly Height (`_JellyHeight`) | 0.90 |
+| Jelly Normal Strength (`_JellyNormalStrength`) | 6.00 |
+| Jelly Smoothing Radius (`_JellySmoothingRadius`) | 3.00 |
+| Jelly Smoothness (`_JellySmoothness`) | 0.92 |
+| Jelly Specular Strength (`_JellySpecularStrength`) | 0.85 |
+| Fresnel Strength (`_JellyFresnelStrength`) | 0.30 |
+| Meniscus Strength (`_MeniscusStrength`) | 0.75 |
+| Meniscus Width (`_MeniscusWidth`) | 0.12 |
+| Jelly Noise Strength (`_JellyNoiseStrength`) | 0.10 |
+| Internal Highlight Variation (`_JellyHighlightVariation`) | 0.12 |
+| Depth Darkening (`_JellyDepthDarkening`) | 0.12 |
+
+All other jelly/meniscus/noise/ripple properties on the material (dome power, blob merge
+softness, broad/sharp specular power, Fresnel power, meniscus smoothness/tint, noise scales and
+speeds, ripple frequency/speed/decay/radius, guide opacity/outline) are separate, independently
+tunable knobs not covered by this baseline table — inspect the material directly for their current
+values.
+
+**Mobile performance**: the surface shader's `Frag` samples a fixed, bounded set of textures per
+pixel — `_BaseMap` (1) + `_PaintTex` (1 center + 4 local + 4 wide = 9) + `_LiquidNoiseTex` (2) +
+`_TargetGuideTex` (1) = **13 texture samples**, no loops, no additional RenderTextures, no GPU
+readback. This is higher than the previous stage's 6-sample version — a deliberate trade for the
+jelly look — and is still a fixed small count suitable for landscape mobile, but is the first place
+to look if profiling shows the surface shader as a bottleneck on low-end devices (e.g. dropping the
+wide 4-tap set and reusing only the local gradient for the broad mound shape).
 
 **To test:** enter Play before painting anything — the heart target should show a faint tinted
-outline (red half / blue half) with a brighter rim at the seam; spray red, and the guide under the
-red region should fade out as coverage increases while the painted area gains a glossy highlight
-and faint liquid shimmer; brush stamp edges should look slightly irregular rather than perfectly
-circular.
+outline (red half / blue half) with a brighter rim at the seam; spray red and watch a single stamp
+look like a rounded blob rather than a flat disc, with adjacent stamps merging into one smooth
+puddle as you keep spraying; the puddle should show a raised, rounded, wet-looking surface with a
+bright meniscus at its edge, soft moving internal highlights, and a slight localized wobble right
+where the spray is currently landing; the guide under the red region should fade out as coverage
+increases.
 
 ## Level Completion (Stage 10)
 

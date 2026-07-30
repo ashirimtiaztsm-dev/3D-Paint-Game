@@ -21,6 +21,10 @@ public class PaintableSurface : MonoBehaviour
     private static readonly int TargetGuideTexId = Shader.PropertyToID("_TargetGuideTex");
     private static readonly int HasTargetGuideId = Shader.PropertyToID("_HasTargetGuide");
 
+    private static readonly int ImpactUVId = Shader.PropertyToID("_ImpactUV");
+    private static readonly int ImpactStartTimeId = Shader.PropertyToID("_ImpactStartTime");
+    private static readonly int ImpactStrengthId = Shader.PropertyToID("_ImpactStrength");
+
     [Header("References")]
     [SerializeField] private PaintSurfaceMarker marker;
     [SerializeField] private Renderer surfaceRenderer;
@@ -163,6 +167,7 @@ public class PaintableSurface : MonoBehaviour
         ClearRenderTexture(workingPaintTexture, initialClearColor);
         hasPreviousStrokeUV = false;
         ApplyPaintTextureToRenderer();
+        ResetImpactRipple();
         PaintCleared?.Invoke();
     }
 
@@ -194,6 +199,8 @@ public class PaintableSurface : MonoBehaviour
 
         if (opacity <= 0f)
             return;
+
+        RegisterImpact(uv, opacity);
 
         if (hasPreviousStrokeUV)
         {
@@ -262,6 +269,31 @@ public class PaintableSurface : MonoBehaviour
             warnedMissingGuide = true;
             Debug.LogWarning($"{nameof(PaintableSurface)} on '{name}': {nameof(maskProvider)} has no guide texture yet — target guide will not be shown.", this);
         }
+    }
+
+    // Pushes the latest accepted spray-hit location/time/strength for the shader's impact-ripple
+    // effect. Read via _Time.y in the shader, so this only needs to update on an actual hit — never
+    // per-frame, never a texture write.
+    private void RegisterImpact(Vector2 uv, float strength)
+    {
+        if (surfaceRenderer == null || propertyBlock == null)
+            return;
+
+        surfaceRenderer.GetPropertyBlock(propertyBlock);
+        propertyBlock.SetVector(ImpactUVId, new Vector4(uv.x, uv.y, 0f, 0f));
+        propertyBlock.SetFloat(ImpactStartTimeId, Time.time);
+        propertyBlock.SetFloat(ImpactStrengthId, strength);
+        surfaceRenderer.SetPropertyBlock(propertyBlock);
+    }
+
+    private void ResetImpactRipple()
+    {
+        if (surfaceRenderer == null || propertyBlock == null)
+            return;
+
+        surfaceRenderer.GetPropertyBlock(propertyBlock);
+        propertyBlock.SetFloat(ImpactStrengthId, 0f);
+        surfaceRenderer.SetPropertyBlock(propertyBlock);
     }
 
     private void StampAt(Vector2 uv, PaintColorDefinition paint, float opacity, Texture allowedMask)

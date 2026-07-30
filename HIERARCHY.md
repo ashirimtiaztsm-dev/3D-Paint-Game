@@ -177,16 +177,79 @@ PaintTargetMaskProvider.RebuildMasks() (Awake / target change — never per-fram
                 │ MasksRebuilt event
                 ▼
 PaintableSurface.ApplyGuideTexture() ──MaterialPropertyBlock──▶ _TargetGuideTex / _HasTargetGuide
-      │ (also sets _PaintTex, _BaseMap, _LiquidNoiseTex — property block only, no runtime Material)
+      │ (also sets _PaintTex, _BaseMap, _LiquidNoiseTex, _ImpactUV/_ImpactStartTime/_ImpactStrength
+      │  — property block only, no runtime Material for the surface renderer)
       ▼
-PaintableSurface.shader (per-pixel, Frag)
-      ├─ 5-tap _PaintTex alpha gradient ──▶ fake raised normal ──▶ specular highlight + wet edge rim
-      ├─ _LiquidNoiseTex (scrolling, painted areas only) ──▶ subtle liquid shimmer
-      └─ _TargetGuideTex, gated by _HasTargetGuide, faded by (1 - paintAlpha) ──▶ pre-paint guide overlay
+PaintableSurface.shader (per-pixel, Frag) — see "Jelly Paint Volume" below for the full pipeline
+      └─ _TargetGuideTex, gated by _HasTargetGuide, faded by (1 - coverage) ──▶ pre-paint guide overlay
 
 PaintSprayer.ShowImpact() ──on color change/first contact──▶ ImpactParticles.Emit(contactPulseParticleCount)
       (reuses the existing ImpactParticles system — droplet/splash tuning, shrinks over lifetime)
 SprayParticles renderer.renderMode = Stretch (velocity-aligned) for a tighter liquid stream
+```
+
+### Jelly Paint Volume
+
+```
+PaintSprayHit (accepted, matching-colour)
+      │
+      ▼
+PaintableSurface.HandleSprayHitReceived()
+      ├──RegisterImpact(uv, opacity)──MaterialPropertyBlock──▶ _ImpactUV / _ImpactStartTime(Time.time) / _ImpactStrength
+      └──StampAt(uv, paint, opacity, allowedMask)──Graphics.Blit──▶ PaintBrush.shader
+                                                                          │
+                                                                          ▼
+                                                          dome = pow(saturate(1-distance01²), _JellyDomePower)
+                                                          incomingThickness = dome * opacity * _AllowedMask (final gate)
+                                                          newAlpha = SmoothMax(previous.a, incomingThickness, _BlobMergeSoftness)
+                                                                     + previous.a*incomingThickness*_ThicknessBuildRate,
+                                                                     clamped to _MaximumThickness
+                                                                          │
+                                                                          ▼
+                                                     Paint RenderTexture (ping-ponged): RGB = paint colour,
+                                                     Alpha = merged jelly thickness (NOT visible opacity)
+
+Paint RenderTexture (per pixel, PaintableSurface.shader Frag)
+      │
+      ├─ coverage = smoothstep(_PaintCoverageStart, _PaintCoverageFull, thickness)   ← visible opacity curve
+      ├─ local 4-tap gradient (1 texel)  ──▶ fine meniscus edge detail
+      ├─ wide  4-tap gradient (_JellySmoothingRadius texels) ──▶ broad puddle mound
+      │        combined gradient ──▶ jellyNormal (fake raised normal)
+      ├─ _LiquidNoiseTex sampled twice (different scale/speed/direction)
+      │        noiseA, noiseB ──▶ jellyNormal perturbation + highlight variation
+      │        abs(noiseA-noiseB) ──▶ soft internal cloudy pattern (coverage-gated)
+      ├─ _ImpactUV/_ImpactStartTime/_ImpactStrength + _Time.y
+      │        ──▶ localized decaying ripple ──▶ jellyNormal + specular only (never mask/colour/progress)
+      ├─ jellyNormal ──▶ broad + sharp specular, Fresnel rim, depth darkening (GetMainLight)
+      ├─ local gradient + coverage ──▶ meniscus rim (_MeniscusWidth/Strength/Smoothness/Tint)
+      └─ final = lerp(baseColor, paint.rgb, coverage) + specular + fresnel + meniscus + internal glow
+                 then blended with the target-guide overlay (above)
+
+ClearPaint() ──▶ clears both RenderTextures (thickness→0), ResetImpactRipple() (_ImpactStrength=0),
+                 PaintCleared event ──▶ PaintCoverageTracker.ResetProgress() (unchanged)
+```
+
+### Material Configuration
+
+```
+Assets/ColorGame/Materials/PaintableSurface_Test.mat
+      │ shader = ColorGame/PaintableSurface
+      ├─ stores the shared jelly baseline parameters (see README "Current production baseline
+      │  values") — these are shared, static tuning knobs, not per-instance runtime state
+      ├─ _PaintTex / _TargetGuideTex left as safe empty/default slots on the asset itself —
+      │  never a painted image, never a manually-assigned guide texture
+      └─ assigned to PaintTarget_Test/PaintSurface's MeshRenderer
+
+Runtime (per PaintSurface instance, MaterialPropertyBlock only — no renderer.material, no
+material instance):
+      PaintableSurface.cs ──▶ _PaintTex (generated Paint RenderTexture)
+      PaintableSurface.cs ──▶ _TargetGuideTex / _HasTargetGuide (from PaintTargetMaskProvider)
+      PaintableSurface.cs ──▶ _LiquidNoiseTex (assigned once, Awake)
+      PaintableSurface.cs ──▶ _ImpactUV / _ImpactStartTime / _ImpactStrength (per accepted hit)
+
+Manual edits to the material's baseline values (dome/jelly/meniscus/lighting/noise/ripple tuning)
+never touch PaintCoverageTracker, PaintTargetMaskProvider, or target-region ownership — those stay
+entirely on the C# side and are unaffected by shader/material tuning.
 ```
 
 ### Level Completion (Stage 10)

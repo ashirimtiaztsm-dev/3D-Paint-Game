@@ -14,6 +14,12 @@ Shader "Hidden/ColorGame/PaintBrush"
         _BrushNoiseTex ("Brush Edge Noise", 2D) = "white" {}
         _BrushNoiseScale ("Brush Edge Noise Scale", Float) = 8
         _BrushNoiseStrength ("Brush Edge Noise Strength", Range(0, 1)) = 0
+
+        [Header(Jelly Thickness Deposit)]
+        _JellyDomePower ("Jelly Dome Power", Range(0.3, 1.5)) = 0.7
+        _BlobMergeSoftness ("Blob Merge Softness", Range(0.001, 0.5)) = 0.12
+        _ThicknessBuildRate ("Thickness Build Rate", Range(0, 1)) = 0.35
+        _MaximumThickness ("Maximum Thickness", Range(0.5, 2)) = 1.0
     }
 
     SubShader
@@ -45,6 +51,10 @@ Shader "Hidden/ColorGame/PaintBrush"
             float _BrushOpacity;
             float _BrushNoiseScale;
             float _BrushNoiseStrength;
+            float _JellyDomePower;
+            float _BlobMergeSoftness;
+            float _ThicknessBuildRate;
+            float _MaximumThickness;
 
             struct Attributes
             {
@@ -66,36 +76,53 @@ Shader "Hidden/ColorGame/PaintBrush"
                 return output;
             }
 
+            // Classic polynomial smooth-min (IQ), then smooth-max via sign flip. No loops, two cheap
+            // scalar ops — safe for a per-pixel fragment shader with no derivative/branch cost.
+            float SmoothMin(float a, float b, float k)
+            {
+                float h = saturate(0.5 + 0.5 * (b - a) / max(k, 1e-5));
+                return lerp(b, a, h) - k * h * (1.0 - h);
+            }
+
+            float SmoothMax(float a, float b, float k)
+            {
+                return -SmoothMin(-a, -b, k);
+            }
+
             half4 Frag(Varyings input) : SV_Target
             {
                 half4 previous = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv);
 
                 float distanceFromBrush = distance(input.uv, _BrushUV.xy);
-                float innerRadius = _BrushRadius * saturate(_BrushHardness);
 
-                // Organic edge: perturb only the outer radius, sampled from a fixed noise texture in
-                // surface UV space so a given point on the surface always gets the same offset (no
-                // per-frame shimmer). Center of the stamp (inside innerRadius) stays perfectly solid.
+                // Organic outer edge: perturb the effective radius using a fixed noise texture in
+                // surface UV space (same point on the surface always gets the same offset — no
+                // per-frame shimmer), concentrated near the edge only.
                 float edgeNoise = SAMPLE_TEXTURE2D(_BrushNoiseTex, sampler_BrushNoiseTex, input.uv * _BrushNoiseScale).r - 0.5;
-                float noiseInfluence = smoothstep(innerRadius * 0.5, innerRadius, distanceFromBrush);
-                float outerRadius = max(innerRadius + 0.00001, _BrushRadius + edgeNoise * noiseInfluence * _BrushNoiseStrength * _BrushRadius);
+                float edgeInfluence = smoothstep(_BrushRadius * 0.5, _BrushRadius, distanceFromBrush);
+                float effectiveRadius = max(_BrushRadius * 0.05, _BrushRadius + edgeNoise * edgeInfluence * _BrushNoiseStrength * _BrushRadius);
 
-                float mask = 1.0 - smoothstep(
-                    innerRadius,
-                    outerRadius,
-                    distanceFromBrush);
+                // Domed liquid deposit: peaks at 1.0 exactly at the stamp centre (always solid there)
+                // and falls off smoothly with no flat plateau and no hard vertical edge.
+                float distance01 = saturate(distanceFromBrush / effectiveRadius);
+                float dome = pow(saturate(1.0 - distance01 * distance01), _JellyDomePower);
 
                 // Per-pixel target clipping: a stamp can straddle more than one region, so this must be
-                // sampled at every pixel, never just checked once at the brush centre.
+                // sampled at every pixel, never just checked once at the brush centre. This is the final,
+                // authoritative gate — wrong-colour / out-of-region paint is rejected here regardless of
+                // dome shape or noise.
                 float allowed = SAMPLE_TEXTURE2D(_AllowedMask, sampler_AllowedMask, input.uv).r;
 
-                float stampAlpha = saturate(mask * _BrushOpacity * allowed);
+                float incomingThickness = saturate(dome * _BrushOpacity) * allowed;
 
-                half3 blendedColor =
-                    lerp(previous.rgb, _BrushColor.rgb, stampAlpha);
+                // Smooth-union the incoming dome with whatever thickness is already there, plus a small
+                // extra build-up term where both overlap, so repeated/overlapping spray reads as
+                // thickening liquid rather than a flat re-stamped circle. Clamped to a safe maximum.
+                float merged = SmoothMax(previous.a, incomingThickness, _BlobMergeSoftness);
+                float build = previous.a * incomingThickness * _ThicknessBuildRate;
+                half blendedAlpha = (half)saturate(min(merged + build, _MaximumThickness));
 
-                half blendedAlpha =
-                    saturate(previous.a + stampAlpha * (1.0 - previous.a));
+                half3 blendedColor = lerp(previous.rgb, _BrushColor.rgb, saturate(incomingThickness));
 
                 return half4(blendedColor, blendedAlpha);
             }
