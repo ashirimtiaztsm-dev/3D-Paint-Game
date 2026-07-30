@@ -4,6 +4,113 @@ All notable changes to this project are documented in this file, derived from th
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); this project does not yet
 use version numbers, so entries are grouped by date/commit instead.
 
+## 2026-07-30 — Fix: walk animation not playing at all (regression from LocomotionPlaybackSpeed)
+
+- **Regression**: after the previous locomotion fix, the character stopped visibly animating
+  entirely — `Idle` and `Move` both appeared as a static pose, for both slight and full joystick
+  input, even though `Player` movement and `PlayerVisualRoot` rotation continued working correctly
+  (confirming the bug was isolated to the Animator, not `PlayerMovementController`).
+- **Static inspection findings** (Play-mode telemetry was not available this session, so live
+  parameter/state values during Play could not be directly observed): every structural setting
+  checked out correctly even before this fix — `Move` state's `speed` was already `1` (not `0`),
+  `PlayerAnimationController.animator`/`movementController`/`fireController` all pointed at the
+  live, correct component instances (no stale references survived the earlier
+  `PrefabUtility.ApplyPrefabInstance` call), the Animator's `avatar`/`isHuman`/`applyRootMotion`/
+  `enabled` were all correct, only one `Animator` exists on the skeleton, and no Any-State
+  transition or duplicate transition was forcing the layer back to `Idle`. No definitive single
+  smoking gun was found via static inspection alone.
+- Per the explicit instruction for this fix, **removed the `LocomotionPlaybackSpeed` mechanism
+  entirely** — the previous fix used it as the `Move` state's Speed Parameter (a runtime float
+  multiplier on top of the state's base speed), which is a plausible failure point (e.g. a
+  parameter read/write timing issue) that a fixed-speed state cannot exhibit. Confirmed via
+  `grep -rl "LocomotionPlaybackSpeed" Assets` that nothing else referenced it before removing the
+  Animator parameter.
+- **Defensive fix applied in addition** (since static inspection could not rule it out): the
+  character's `Animator.cullingMode` was `CullUpdateTransforms`, which skips updating bone
+  transforms when Unity considers the renderer off-screen — a known cause of "logically animating
+  but visually frozen" characters if renderer bounds are ever momentarily wrong. Changed to
+  `AlwaysAnimate` for this single player character (negligible cost, eliminates the whole failure
+  class).
+- Rebuilt the Base Layer to match exactly:
+  - `Idle` (default, `Idle_Normal_SwordAndShield`, speed 1, no speed/time/mirror/cycle-offset
+    parameters) ↔ `Move` (`MoveFWD_Normal_InPlace_SwordAndShield`, **speed fixed at 1, `Speed
+    Parameter` disabled** — no float drives playback rate anymore).
+  - Exactly one transition each way: `Idle→Move` on `IsMoving == true` (no exit time, fixed
+    0.05s), `Move→Idle` on `IsMoving == false` (no exit time, fixed 0.08s); `Can Transition To
+    Self` disabled on both; duplicate transitions cleared before re-adding.
+  - Removed the `LocomotionPlaybackSpeed` Animator parameter. Final gameplay parameter set is
+    exactly `IsMoving` (bool) and `IsSpraying` (bool) — `MoveSpeed` was already removed in the
+    prior stage.
+- Simplified `PlayerAnimationController.cs` to the bool-only implementation: reads
+  `movementController.HorizontalSpeed` directly (world m/s, not normalized) against
+  `startMovingSpeed` (0.05) / `stopMovingSpeed` (0.02) hysteresis, sets `IsMoving` only on an
+  actual state change, and no longer touches any speed/playback-rate parameter. `IsSpraying` logic
+  is unchanged; `OnEnable` now also re-syncs `IsSpraying` to `fireController.IsFiring` on enable
+  (covers the case where firing was already in progress when this component re-enables) and always
+  resets both parameters to a known state on enable/disable.
+- Verified the `Move` clip's import settings (`MoveFWD_Normal_InPlace_SwordAndShield.fbx`):
+  Animation Type Humanoid, Avatar Setup `Copy From Other Avatar`, and — most importantly — the
+  actual runtime `AnimationClip` (not the importer's raw per-take entry, which is a repackaged FBX
+  take and not directly representative) reports `isLooping = true`, `humanMotion = true`, and a
+  valid positive length (0.53s). No importer changes were made; the vendor asset was not modified.
+- Confirmed the `RightArmSpray` layer, its mask, `Empty`/`SprayDefend` states, and the `Mirror`
+  decision are all unchanged; `Empty`'s motion is (still) explicitly `null` so it contributes no
+  static pose when not spraying.
+- Re-applied all of the above to the connected `MaleCharacterPlayer.prefab` via
+  `PrefabUtility.ApplyPrefabInstance`, then re-read `PlayerAnimationController`'s references from
+  the live scene instance afterward to confirm they were not lost by the apply (they weren't).
+  Particle materials, the paint system, movement speed, joystick, camera, Fill, Fire, progress, and
+  the win panel were not touched in this fix.
+
+## 2026-07-30 — Locomotion and paint-particle color fixes
+
+- **Root cause, partial-joystick sliding**: the Base Layer used a 1D Blend Tree driven directly by
+  `NormalizedHorizontalSpeed`, so any partial joystick input produced a partial Idle/Walk *blend*
+  rather than the complete walk clip — visually, the character glided with a mostly-static lower
+  body instead of walking. Replaced the Blend Tree with two plain states, **Idle** and **Move**
+  (`MaleCharacterPlayer.controller`, Base Layer): `Idle` (`Idle_Normal_SwordAndShield`, default
+  state) transitions to `Move` (`MoveFWD_Normal_InPlace_SwordAndShield`, played at full weight —
+  never blended) on the new `IsMoving` bool, both transitions with no exit time and a fixed
+  duration (0.08s in, 0.12s out). The old `MoveSpeed` float parameter and its Blend Tree sub-asset
+  were removed (confirmed via a project-wide search that nothing else referenced `MoveSpeed`
+  before deleting it).
+- Added `LocomotionPlaybackSpeed` (float) driving the **`Move` state's own Speed Parameter only**
+  — not `Animator.speed`, which would have also sped up the independent `RightArmSpray` layer.
+  `PlayerAnimationController` now uses start/stop **hysteresis** thresholds
+  (`startMovingThreshold` 0.05, `stopMovingThreshold` 0.025) to set `IsMoving` without flicker near
+  zero speed, and computes `LocomotionPlaybackSpeed` as `HorizontalSpeed / referenceWalkWorldSpeed`
+  (default reference 3.5, clamped to `[0.45, 1.4]`) so the walk cycle's playback rate roughly
+  tracks actual world displacement instead of always playing at a fixed rate — reducing the
+  appearance of foot sliding at partial input without changing `PlayerMovementController.moveSpeed`
+  or the underlying movement feel.
+- **Root cause, pink/magenta particles**: inspected both `SprayParticles`' and `ImpactParticles`'
+  `ParticleSystemRenderer`s and found `sharedMaterial` was `null` on both — Unity renders any
+  renderer with no material assigned using its built-in magenta "missing material" fallback. This
+  was not a missing/unsupported shader, broken texture reference, nor a Color-over-Lifetime/
+  Color-by-Speed override (both modules were already disabled on the inspected system).
+- Created `Assets/ColorGame/Textures/Particles/SoftPaintParticle.png` (a generated 128×128 white
+  circle with a smooth alpha falloff to transparent, Clamp wrap, bilinear, no mipmaps, alpha-is-
+  transparency) and `Assets/ColorGame/Materials/Particles/PaintSprayParticle.mat` (`Universal
+  Render Pipeline/Particles/Unlit`, Transparent surface, Alpha blend, `ZWrite` off, Base Color pure
+  white, Base Map = the new texture). Assigned this one shared material to both
+  `SprayParticles` and `ImpactParticles` renderers — the material's white base color never tints
+  `startColor`, so the paint color set by `PaintSprayer` is the only source of the visible hue.
+- Updated `PaintSprayer.cs`: `BeginSprayVisual` now stops-and-clears (`StopEmittingAndClear`)
+  `SprayParticles` before applying the new color and playing — this only runs once per firing
+  session (not per frame), so switching paint color between sessions can no longer leave old-color
+  particles lingering. `ShowImpact` tracks the last-applied impact color and only
+  stops-and-clears `ImpactParticles` on an actual color change (compared every hit-frame, but only
+  acts when the color differs from the previous frame), leaving the continuous same-color case
+  untouched. `ApplyParticleColor`'s architecture (`ParticleSystem.MainModule.startColor =
+  paint.DisplayColor`) is unchanged. The paint color source remains
+  `PaintGunReservoir.CurrentPaint.DisplayColor` throughout — never sampled from
+  `PaintContainerVisual`'s rendered color or compared by name.
+- Applied all of the above to the connected `MaleCharacterPlayer.prefab` Prefab Variant (the
+  `SprayParticles` renderer lives inside that prefab's hierarchy) via
+  `PrefabUtility.ApplyPrefabInstance`; `ImpactParticles` lives on the scene-only `PaintTarget_Test`
+  and needed only a scene save. Neither vendor source prefab (`MaleCharacterPBR.prefab`,
+  `Cosmic_Retro_Blaster_1.prefab`) was touched.
+
 ## 2026-07-29 — Stage 11: character, blaster, and animation integration
 
 - Replaced the placeholder capsule `CharacterVisual` (deactivated, not deleted) with an instance of

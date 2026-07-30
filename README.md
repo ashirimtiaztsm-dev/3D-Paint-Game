@@ -77,7 +77,7 @@ See [ASSET_CATALOG.md](ASSET_CATALOG.md) for a full inventory of every asset in 
   `PaintCoverageTracker.Completed`, freezes movement/camera/fill/fire input and shows the
   level-complete panel (see below).
 - **[PlayerAnimationController.cs](Assets/ColorGame/Scripts/Player/PlayerAnimationController.cs)** —
-  drives the character `Animator`'s `MoveSpeed`/`IsSpraying` parameters from
+  drives the character `Animator`'s `IsMoving`/`LocomotionPlaybackSpeed`/`IsSpraying` parameters from
   `PlayerMovementController` and `PaintGunFireController` (see Character & Animation below).
 
 See [HIERARCHY.md](HIERARCHY.md) for the full event/dependency flow between these systems.
@@ -100,21 +100,63 @@ The placeholder capsule visual is replaced by the **MaleCharacterPBR** Humanoid 
   inside `PaintGun`.
 - **[MaleCharacterPlayer.controller](Assets/ColorGame/Animations/Controllers/MaleCharacterPlayer.controller)**
   has two layers:
-  - **Base Layer** — a 1D Blend Tree on the `MoveSpeed` float parameter, blending
-    `Idle_Normal_SwordAndShield` (0) into `MoveFWD_Normal_InPlace_SwordAndShield` (1). Root motion
-    is disabled; the in-place clip never moves the `Player` transform.
+  - **Base Layer** — plain `Idle` ↔ `Move` states (**not** a blend tree, and **not** driven by a
+    speed-scaling parameter — both were tried and caused problems: the blend tree made partial
+    joystick input play a weak sliding-looking mix, and a `Move`-state speed parameter
+    [`LocomotionPlaybackSpeed`] was later found to be a plausible cause of the walk animation not
+    playing at all). `Idle` plays `Idle_Normal_SwordAndShield`; `Move` plays the **complete**
+    `MoveFWD_Normal_InPlace_SwordAndShield` clip at a **fixed speed of 1** whenever the `IsMoving`
+    bool is true — no parameter scales its playback rate. Root motion is disabled; the in-place
+    clip never moves the `Player` transform.
   - **RightArmSpray** layer — masked by
     [RightArmSpray.mask](Assets/ColorGame/Animations/Masks/RightArmSpray.mask) (right arm/fingers
     only), switching `Empty` ↔ `SprayDefend` (`Defend_SwordAndShield`, mirrored) on the `IsSpraying`
     bool, so the left arm and legs keep playing the Base Layer's idle/walk animation uninterrupted.
-- `PlayerAnimationController.cs` is the only thing that writes to the Animator: `MoveSpeed` comes
-  from `PlayerMovementController.NormalizedHorizontalSpeed`, and `IsSpraying` mirrors
-  `PaintGunFireController.FireStarted`/`FireStopped` — so the pose always reflects the same
-  movement/firing state the rest of the game already uses.
+- `PlayerAnimationController.cs` is the only thing that writes to the Animator, and it's
+  deliberately simple: `IsMoving` is **hysteresis-gated** on `PlayerMovementController`'s actual
+  world-space `HorizontalSpeed` (metres/second, not normalized) — it turns on above
+  `startMovingSpeed` (0.05) and off below the lower `stopMovingSpeed` (0.02), so tiny residual
+  speed during deceleration can't flicker Idle/Move back and forth, and the bool is only written
+  to the Animator on an actual state change. Any input past the start threshold plays the
+  complete walk clip at its normal speed — there is no partial blend and no runtime speed
+  scaling. `IsSpraying` mirrors `PaintGunFireController.FireStarted`/`FireStopped` (and is
+  re-synced to `fireController.IsFiring` on enable).
+- The Animator's `cullingMode` is `AlwaysAnimate` (not the default `CullUpdateTransforms`) — a
+  defensive choice for this single player character, since `CullUpdateTransforms` can skip bone
+  updates entirely if Unity ever misjudges the renderer as off-screen.
 
-**To test:** press Play — the character should idle, blend into the walk animation while moving,
-and raise the blaster with its right arm for as long as Fire is held (releasing Fire, running out
-of paint, leaving the target, or completing the level all return it to idle/walk).
+**Runtime verification, if locomotion ever looks wrong again**: check (in this order) whether
+`PlayerAnimationController.animator` still points at the *active* `Animator` on the character
+instance (not a stale reference from a previous prefab apply), whether `Animator.IsMoving` is
+actually flipping true/false as expected, whether the Base Layer's current state is `Move`, and
+whether that state's `normalizedTime` is advancing — a state that's active but frozen in time
+means something is overriding playback (culling, a stray speed parameter, etc.), while a state
+that never leaves `Idle` means the `IsMoving` bool or its transition condition is the problem.
+
+**To test:** press Play — the character should idle, and any meaningful joystick input (even
+slight, in any direction) should immediately play the complete walk animation with visibly moving
+legs, and raise the blaster with its right arm for as long as Fire is held (releasing Fire, running
+out of paint, leaving the target, or completing the level all return it to idle/walk).
+
+## Paint Particles
+
+`SprayParticles` and `ImpactParticles` use a dedicated URP-compatible material,
+[PaintSprayParticle.mat](Assets/ColorGame/Materials/Particles/PaintSprayParticle.mat) (`Universal
+Render Pipeline/Particles/Unlit`, white Base Color, a soft circular white texture as the Base Map).
+Previously both `ParticleSystemRenderer`s had **no material assigned at all**, which Unity renders
+using its built-in pink/magenta "missing material" fallback — not a broken or unsupported shader.
+
+The paint color itself still comes from `PaintGunReservoir.CurrentPaint.DisplayColor`, applied via
+`PaintSprayer.ApplyParticleColor` → `ParticleSystem.MainModule.startColor` (never sampled from
+`PaintContainerVisual`'s rendered color, never compared by name). Since the material's Base Color
+is white, `startColor` is the only thing that tints the particles, so red paint produces red
+particles and blue paint produces blue particles with no extra logic needed. `PaintSprayer` now
+also stops-and-clears both particle systems whenever a new firing session starts or the active
+paint color actually changes (not every frame), so switching from red to blue can't leave old red
+particles lingering.
+
+**To test:** fill red, fire, confirm red spray/impact particles; fill blue, fire, confirm blue
+spray/impact particles with no leftover red particles from the previous session.
 
 ## Level Completion (Stage 10)
 

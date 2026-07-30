@@ -199,20 +199,35 @@ LevelCompletePanel.SetActive(true)  (re-asserted as last Canvas sibling)
 `fireController`, `contextualActionUI`) — all on `Player`, `Main Camera`, or `Canvas/ActionButtons`
 as listed elsewhere in this document.
 
-### Character Animation (Stage 11)
+### Character Animation (Stage 11; locomotion simplified 2026-07-30 after a frozen-animation regression)
+
+> The Base Layer went through three designs: a Blend Tree (made partial input play a weak blend),
+> then a fixed set of states with a `Move`-state Speed Parameter called `LocomotionPlaybackSpeed`
+> (a plausible cause of the walk animation freezing entirely — static inspection could not find a
+> definitive single cause, but this mechanism was the most likely suspect and was removed), and
+> now this final bool-only, fixed-speed design. `MoveSpeed` and `LocomotionPlaybackSpeed` no longer
+> exist anywhere in the controller or scripts.
 
 ```
-PlayerMovementController.horizontalVelocity
-      │ NormalizedHorizontalSpeed (read-only property, damped by PlayerAnimationController)
+PlayerMovementController.HorizontalSpeed
+      │ (read-only property, world m/s — NOT normalized, no speed/playback-rate use anymore)
       ▼
 PlayerAnimationController (Player/)
-      │ animator.SetFloat("MoveSpeed", ..., movementDampTime, Time.deltaTime)
+      │ hysteresis: startMovingSpeed (0.05) to begin moving, stopMovingSpeed (0.02) to stop —
+      │ prevents Idle/Move flicker near zero speed
       ▼
-Animator (MaleCharacterPlayer instance) ── Base Layer: 1D Blend Tree on MoveSpeed
-      │                                     0 → Idle_Normal_SwordAndShield
-      │                                     1 → MoveFWD_Normal_InPlace_SwordAndShield
+      │ animator.SetBool("IsMoving", shouldMove)     [only on an actual state change]
       ▼
-Character skeleton (all bones, Base Layer weight 1, Override)
+Animator (MaleCharacterPlayer instance) ── Base Layer: plain Idle/Move states (no blend tree,
+      │                                     no speed parameter)
+      │   Idle (Idle_Normal_SwordAndShield, default, speed=1) ──IsMoving==true, no exit time,
+      │         0.05s fixed──▶ Move
+      │   Move (MoveFWD_Normal_InPlace_SwordAndShield, speed=1 FIXED, Speed Parameter DISABLED)
+      │         ──IsMoving==false, no exit time, 0.08s fixed──▶ Idle
+      ▼
+Character skeleton (all bones, Base Layer — implicitly full weight; Unity ignores/doesn't expose
+a weight control for layer 0). Animator.cullingMode = AlwaysAnimate (changed from
+CullUpdateTransforms as a defensive measure against off-screen-culling freezing bone transforms).
 
 PaintGunFireController.FireStarted / FireStopped
       │
@@ -232,7 +247,37 @@ PaintGun (+ Cosmic_Retro_Blaster_1) follows the animated hand every frame
 `PlayerAnimationController`'s serialized references: `animator` (on the `MaleCharacterPlayer`
 instance), `movementController` (`Player`'s `PlayerMovementController`), `fireController`
 (`Player`'s `PaintGunFireController`) — all on `Player` or its `PlayerVisualRoot` subtree, no
-`GameObject.Find`/`FindObjectOfType` anywhere in the chain.
+`GameObject.Find`/`FindObjectOfType` anywhere in the chain. Final gameplay Animator parameter set:
+`IsMoving` (bool) and `IsSpraying` (bool) only — `MoveSpeed` (the original Blend Tree parameter)
+and `LocomotionPlaybackSpeed` (the since-removed `Move`-state speed parameter) no longer exist
+anywhere in the controller or scripts (see [CHANGELOG.md](CHANGELOG.md), 2026-07-30).
+
+### Paint Particle Color (fixed 2026-07-30)
+
+```
+PaintGunReservoir.CurrentPaint
+      │ (PaintColorDefinition)
+      ▼
+PaintColorDefinition.DisplayColor ──┬──▶ PaintGunVisual (PaintContainerVisual's tint/fill, unchanged)
+                                     │
+                                     └──▶ PaintSprayer.ApplyParticleColor
+                                              │ ParticleSystem.MainModule.startColor = DisplayColor
+                                              ▼
+                                  SprayParticles / ImpactParticles
+                                  (ParticleSystemRenderer.sharedMaterial =
+                                   Assets/ColorGame/Materials/Particles/PaintSprayParticle.mat —
+                                   Universal Render Pipeline/Particles/Unlit, Base Color WHITE,
+                                   Base Map = Assets/ColorGame/Textures/Particles/SoftPaintParticle.png)
+```
+
+The container and both particle systems all read the same `PaintColorDefinition.DisplayColor` —
+none of them sample each other's rendered color or compare by name. The particle material's white
+Base Color means it never tints `startColor`; before this fix, both renderers had **no material
+assigned at all**, which Unity renders with its built-in magenta "missing material" fallback (not
+a shader/texture problem). `PaintSprayer.BeginSprayVisual` stops-and-clears `SprayParticles` once
+per firing-session start (not every frame); `ShowImpact` stops-and-clears `ImpactParticles` only
+when the active paint color actually differs from the previous hit-frame's — so a color switch
+between red and blue can't leave stale-color particles on screen.
 
 ### Shared Data Types
 

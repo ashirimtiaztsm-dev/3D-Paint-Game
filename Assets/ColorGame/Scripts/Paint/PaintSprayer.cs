@@ -17,6 +17,8 @@ public class PaintSprayer : MonoBehaviour
     [SerializeField] private bool debugRay;
 
     private bool impactVisible;
+    private PaintColorDefinition lastSprayPaint;
+    private PaintColorDefinition lastImpactPaint;
 
     private void Awake()
     {
@@ -57,11 +59,17 @@ public class PaintSprayer : MonoBehaviour
     }
 
     // Starts the continuous spray stream for a firing session. Called once when firing begins.
+    // Clears any particles left over from a previous session/colour before restarting — never
+    // called per-frame, so this can't thrash the particle buffer during a normal hold-to-fire.
     public void BeginSprayVisual(PaintColorDefinition paint)
     {
-        ApplyParticleColor(sprayParticles, paint);
+        if (sprayParticles != null)
+            sprayParticles.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
 
-        if (sprayParticles != null && !sprayParticles.isPlaying)
+        ApplyParticleColor(sprayParticles, paint);
+        lastSprayPaint = paint;
+
+        if (sprayParticles != null)
             sprayParticles.Play();
     }
 
@@ -70,6 +78,9 @@ public class PaintSprayer : MonoBehaviour
     {
         if (sprayParticles != null && sprayParticles.isPlaying)
             sprayParticles.Stop(true, ParticleSystemStopBehavior.StopEmitting);
+
+        lastSprayPaint = null;
+        lastImpactPaint = null;
 
         HideImpactVisual();
     }
@@ -107,6 +118,14 @@ public class PaintSprayer : MonoBehaviour
 
         Vector3 position = hit.point + hit.normal * impactNormalOffset;
         impactParticles.transform.SetPositionAndRotation(position, Quaternion.LookRotation(hit.normal));
+
+        // Only clear on an actual colour change, never every frame — this runs once per hit frame
+        // while actively spraying, and most of those frames keep the same colour as the last one.
+        if (lastImpactPaint != paint)
+        {
+            impactParticles.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+            lastImpactPaint = paint;
+        }
 
         ApplyParticleColor(impactParticles, paint);
 
