@@ -10934,7 +10934,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 7503468979337465562, guid: afb646de79c3df44a9681e5f386bb04a, type: 3}
       propertyPath: moveWithTransform
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 7503468979337465562, guid: afb646de79c3df44a9681e5f386bb04a, type: 3}
       propertyPath: SizeModule.enabled
@@ -10946,7 +10946,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 7503468979337465562, guid: afb646de79c3df44a9681e5f386bb04a, type: 3}
       propertyPath: NoiseModule.enabled
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 7503468979337465562, guid: afb646de79c3df44a9681e5f386bb04a, type: 3}
       propertyPath: NoiseModule.frequency
@@ -10954,7 +10954,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 7503468979337465562, guid: afb646de79c3df44a9681e5f386bb04a, type: 3}
       propertyPath: VelocityModule.enabled
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 7503468979337465562, guid: afb646de79c3df44a9681e5f386bb04a, type: 3}
       propertyPath: VelocityModule.x.scalar

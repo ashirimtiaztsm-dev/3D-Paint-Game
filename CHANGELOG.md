@@ -4,6 +4,43 @@ All notable changes to this project are documented in this file, derived from th
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); this project does not yet
 use version numbers, so entries are grouped by date/commit instead.
 
+## 2026-07-31 — Fix spray particle velocity-curve error and movement bending
+
+- **Problem 1 (Console error)**: `"Particle Velocity curves must all be in the same mode"`,
+  spammed every frame while `SprayParticles` was playing.
+- **Confirmed exact cause** by inspecting the live `VelocityOverLifetimeModule`: `SprayParticles`'
+  X curve mode = `TwoConstants`, Y curve mode = `TwoConstants`, **Z curve mode = `Constant`** — a
+  self-inflicted regression from an earlier session's particle-tuning pass, where X/Y were set via
+  `new ParticleSystem.MinMaxCurve(min, max)` (which produces `TwoConstants` mode) and Z via `new
+  ParticleSystem.MinMaxCurve(0f)` (the single-argument overload, which produces `Constant` mode).
+  Unity requires all three axes of a curve module to share one mode. `ImpactParticles`' `Velocity
+  over Lifetime` was confirmed already disabled and was never involved in this error.
+- Fixed by disabling `Velocity over Lifetime` entirely on `SprayParticles` (rather than
+  re-authoring three matching-mode curves) — cone spread, random start speed/size/rotation already
+  provide sufficient droplet variation without it. Also disabled `Noise` on `SprayParticles`, which
+  was independently causing visible sideways drift.
+- **Problem 2 (movement bending)**: the spray stream visibly curved and trailed behind the gun
+  while the character moved (confirmed via the reported gameplay video). Cause: `SprayParticles`
+  used `simulationSpace = World`, so already-emitted droplets kept their original world-space
+  trajectory after the emitter (and character) moved on. Fixed by setting `simulationSpace =
+  Local` — droplets now move with the `SprayParticles` transform, keeping the stream visually
+  attached to the muzzle through forward/backward/strafe/turning movement.
+  `ImpactParticles` intentionally stays in **World** space (unchanged) — impact droplets must
+  remain at the hit surface, not follow the moving gun.
+- Verified the transform scale chain from `Player` down to `SprayParticles`: every ancestor is
+  exactly `(1,1,1)`; `SprayParticles` itself has a uniform `1.5×` local scale (equal on all axes,
+  so it doesn't distort stream direction). No non-uniform scaling found anywhere in the chain.
+- `PaintSprayer.cs` reviewed and confirmed unchanged — it never sets `simulationSpace`, velocity,
+  noise, or particle-transform rotation, and the raycast still uses `sprayOrigin.forward`.
+- Files/scene objects changed: `SprayParticles` (`ParticleSystem` `velocityOverLifetime`, `noise`,
+  `main.simulationSpace` only). `ImpactParticles`, `PaintSprayer.cs`, jelly-paint shaders/mesh,
+  target masks, progress tracking, the vertical reservoir UI, win panel, character
+  movement/animation, and camera were **not** touched.
+- **Regression check**: zero console errors or warnings after the fix and a fresh `assets-refresh`
+  (confirmed via `console-get-logs`, which also showed the error firing repeatedly during actual
+  Play-mode sessions before the fix, confirming the bug was live and reproducible, not just a
+  static-inspection concern).
+
 ## 2026-07-31 — Fix vertical reservoir bar not visibly filling
 
 - **Problem**: the reservoir HUD was already converted to a vertical layout (`Fill Method =

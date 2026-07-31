@@ -177,17 +177,21 @@ existing `SprayParticles` system (no new particle object):
   "laser" look. Alignment `View`, sort mode `None`, shadows off, `motionVectorGenerationMode`
   `Camera`.
 - **Main module**: `startLifetime` 0.16–0.28s, `startSpeed` 3.5–5.5, `startSize` 0.035–0.085,
-  random `startRotation` (0–2π), `simulationSpace` **World** (was `Local` — local space is what
-  made every particle move in one perfectly rigid line relative to the moving gun), `gravityModifier`
+  random `startRotation` (0–2π), `simulationSpace` **Local** (see below), `gravityModifier`
   0.05–0.18 (a subtle downward arc), `maxParticles` 200.
 - **Emission**: continuous `rateOverTime` 90, plus a one-shot burst of 5–7 particles at the start
   of every `Play()` cycle (fires exactly once per `BeginSprayVisual()` call, since that's the only
   place `sprayParticles.Play()` is invoked — no script change needed to get an "on fire start" pop).
 - **Shape**: `Cone`, 6° angle, 0.025 radius — a slight spread instead of a perfectly straight line.
-- **Velocity over Lifetime**: small random X/Y drift (±0.15 / -0.08 to 0.15) so droplets separate
-  from the main stream without being redirected away from the muzzle.
-- **Noise**: strength 0.12, frequency 0.6, scroll speed 0.35, damping on — organic droplet motion,
-  tuned low enough to avoid looking like smoke.
+- **Velocity over Lifetime**: **disabled**. It was briefly enabled with small random X/Y drift, but
+  the X/Y curves were authored via the two-argument `MinMaxCurve` constructor (`TwoConstants` mode)
+  while Z used the single-argument constructor (`Constant` mode) — Unity requires all three axes to
+  share one curve mode, and the mismatch spammed `"Particle Velocity curves must all be in the same
+  mode"` every frame. Disabled entirely rather than re-authored, since cone spread + random start
+  speed/size/rotation already provide enough variation without it.
+- **Noise**: **disabled** on the main stream — it caused visible sideways drift that read as a bent
+  or wavy stream. Liquid variation comes from random size/speed, cone spread, and the irregular
+  droplet sprite instead.
 - **Size over Lifetime**: curve `0.7 → 1.0 (at 30%) → 0` — droplets swell slightly then shrink away,
   reading as liquid blobs rather than static glowing points.
 - **Color over Lifetime**: RGB kept white, alpha only (`1 → 1 (70%) → 0`) — color still comes
@@ -207,6 +211,37 @@ existing `SprayParticles` system (no new particle object):
 **To test:** fill red, fire — the stream should look like short, separating liquid droplets with a
 slight spread and gentle downward arc, not a straight glowing line; the impact point should show a
 small colored splash. Fill blue and confirm the same in blue, with no leftover red droplets.
+
+### Straight Spray While Moving (Local vs. World Simulation Space)
+
+Two related particle problems, both traced to `SprayParticles`' `ParticleSystem` settings (not to
+`PaintSprayer.cs`, which never touches `simulationSpace`, velocity, noise, or particle-transform
+rotation, and still raycasts along `sprayOrigin.forward` unchanged):
+
+- **Console error**: `"Particle Velocity curves must all be in the same mode"`, spammed every
+  frame `SprayParticles` was playing. Root cause: `Velocity over Lifetime`'s X and Y curves were
+  authored via the two-argument `MinMaxCurve(min, max)` constructor (`TwoConstants` mode) while Z
+  used the single-argument `MinMaxCurve(value)` constructor (`Constant` mode) — Unity requires all
+  three axes of a `ParticleSystem` curve module to share one mode. Fixed by disabling `Velocity
+  over Lifetime` entirely rather than re-authoring it to match modes, since it wasn't needed for
+  the droplet look in the first place. `ImpactParticles`' `Velocity over Lifetime` was already
+  disabled and was never part of this error.
+- **Spray bending/trailing while moving**: `SprayParticles` used `simulationSpace = World`. In
+  World space, already-emitted droplets keep their original world-space trajectory after leaving
+  the emitter — as the character (and the gun) moves, the emission point moves away from those
+  older droplets, which visually reads as the stream curving or trailing behind the muzzle. Fixed
+  by setting `simulationSpace = Local` — droplets now move with the `SprayParticles` transform
+  (i.e. with the gun), so the stream stays visually straight and attached to the muzzle in every
+  movement direction (forward/backward/strafe/rotating). `ImpactParticles` intentionally stays in
+  **World** space — impact droplets must remain at the surface/hit point, not follow the moving gun.
+- Confirmed the full parent chain from `Player` down to `SprayParticles` has no non-uniform
+  scaling: every ancestor transform is `(1,1,1)`; `SprayParticles` itself has a uniform `1.5×`
+  local scale (equal on all three axes), which does not distort the stream's direction.
+
+**To test:** hold Fire while stationary — stream should be a narrow, straight, separating-droplet
+spray. Hold Fire while moving forward, backward, strafing, and turning — the stream should stay
+visually attached to and aligned with the muzzle in every case, with no curved trail left behind.
+Clear the Console first and confirm the velocity-curve error no longer appears.
 
 ## Paint Reservoir HUD (Vertical Fill Bar)
 

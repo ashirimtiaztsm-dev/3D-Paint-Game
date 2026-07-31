@@ -185,9 +185,10 @@ PaintableSurface.shader (per-pixel, Frag) — see "Jelly Paint Volume" below for
 
 PaintSprayer.ShowImpact() ──on color change/first contact──▶ ImpactParticles.Emit(contactPulseParticleCount)
       (reuses the existing ImpactParticles system — droplet/splash tuning, shrinks over lifetime)
-SprayParticles renderer.renderMode = Billboard, World-space, Cone shape + Velocity/Noise/Size-over-
-      Lifetime — liquid-droplet stream (see "Particle & Reservoir HUD Flow" below; superseded the
-      earlier Stretched-Billboard setup, which read as a laser beam)
+SprayParticles renderer.renderMode = Billboard, Local-space, Cone shape + Size-over-Lifetime —
+      liquid-droplet stream (Velocity over Lifetime and Noise disabled — see "Particle & Reservoir
+      HUD Flow" below for why; superseded the earlier Stretched-Billboard setup, which read as a
+      laser beam)
 ```
 
 ### Particle & Reservoir HUD Flow
@@ -199,15 +200,24 @@ PaintGunReservoir.CurrentPaint
 PaintColorDefinition.DisplayColor
       │
       ├──▶ PaintSprayer.ApplyParticleColor() ──▶ SprayParticles.MainModule.startColor
-      │        (Billboard, World space, Cone shape, Velocity/Noise/Size/Color-over-Lifetime —
+      │        (Billboard, LOCAL simulation space, Cone shape, Size/Color-over-Lifetime —
       │         liquid droplets, not a laser; PaintDropletParticle.png + PaintSprayParticle.mat,
-      │         alpha-blended, never additive)
+      │         alpha-blended, never additive. Velocity over Lifetime and Noise are DISABLED —
+      │         Velocity's X/Y/Z curve modes were mismatched (TwoConstants/TwoConstants/Constant),
+      │         which raised "Particle Velocity curves must all be in the same mode" every frame;
+      │         Noise caused visible sideways drift. Local space — not World — is what keeps the
+      │         stream visually attached to the muzzle while the character moves; already-emitted
+      │         droplets in World space kept their old trajectory and appeared to bend/trail
+      │         behind the moving gun.)
       │
       └──▶ (on a valid spray hit) PaintSprayer.ShowImpact() ──▶ ImpactParticles.MainModule.startColor
-               (Billboard, wider cone, burst on contact — small wet paint splash)
+               (Billboard, WORLD simulation space — unchanged, must stay independent of the moving
+               gun — wider cone, burst on contact, Velocity over Lifetime disabled, no mixed-mode
+               curves — small wet paint splash)
 
 PaintSprayer.TryGetValidHit() ──▶ RaycastHit (point, normal)
-      │
+      │        (sprayOrigin.forward — unchanged by any particle-visual fix; PaintSprayer.cs never
+      │         sets simulationSpace, velocity, noise, or particle-transform rotation)
       ▼
 ImpactParticles.transform.SetPositionAndRotation(hit.point + normal*offset, LookRotation(normal))
       (ray misses ──▶ HideImpactVisual(), stream keeps emitting from the muzzle)
