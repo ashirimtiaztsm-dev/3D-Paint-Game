@@ -51,29 +51,29 @@ Material:
     - _ImpactRippleSpeed: 10
     - _ImpactStartTime: -1000
     - _ImpactStrength: 0
-    - _JellyBroadSpecularPower: 28
+    - _JellyBroadSpecularPower: 64
     - _JellyDepthDarkening: 0.12
-    - _JellyFresnelPower: 4
-    - _JellyFresnelStrength: 0.3
-    - _JellyHeight: 0.9
+    - _JellyFresnelPower: 8
+    - _JellyFresnelStrength: 0.1
+    - _JellyHeight: 2
     - _JellyHighlightVariation: 0.12
-    - _JellyInternalGlow: 0.1
-    - _JellyNoiseScaleA: 5
-    - _JellyNoiseScaleB: 9
-    - _JellyNoiseSpeedA: 0.03
-    - _JellyNoiseSpeedB: 0.02
+    - _JellyInternalGlow: 0.15
+    - _JellyNoiseScaleA: 3
+    - _JellyNoiseScaleB: 5
+    - _JellyNoiseSpeedA: 0.06
+    - _JellyNoiseSpeedB: 0.05
     - _JellyNoiseStrength: 0.1
     - _JellyNormalStrength: 6
-    - _JellySharpSpecularPower: 110
+    - _JellySharpSpecularPower: 256
     - _JellySmoothingRadius: 3
     - _JellySmoothness: 0.92
-    - _JellySpecularStrength: 0.85
+    - _JellySpecularStrength: 0.3
     - _LiquidNoiseScale: 6
     - _LiquidNoiseSpeed: 0.04
     - _LiquidNoiseStrength: 0.1
-    - _MeniscusSmoothness: 0.9
-    - _MeniscusStrength: 0.75
-    - _MeniscusWidth: 0.12
+    - _MeniscusSmoothness: 0
+    - _MeniscusStrength: 0.28
+    - _MeniscusWidth: 0.3
     - _PaintCoverageFull: 0.2
     - _PaintCoverageStart: 0.04
     - _PaintEdgeHighlightStrength: 1.6
