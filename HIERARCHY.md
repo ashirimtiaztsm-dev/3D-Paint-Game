@@ -185,7 +185,61 @@ PaintableSurface.shader (per-pixel, Frag) — see "Jelly Paint Volume" below for
 
 PaintSprayer.ShowImpact() ──on color change/first contact──▶ ImpactParticles.Emit(contactPulseParticleCount)
       (reuses the existing ImpactParticles system — droplet/splash tuning, shrinks over lifetime)
-SprayParticles renderer.renderMode = Stretch (velocity-aligned) for a tighter liquid stream
+SprayParticles renderer.renderMode = Billboard, World-space, Cone shape + Velocity/Noise/Size-over-
+      Lifetime — liquid-droplet stream (see "Particle & Reservoir HUD Flow" below; superseded the
+      earlier Stretched-Billboard setup, which read as a laser beam)
+```
+
+### Particle & Reservoir HUD Flow
+
+```
+PaintGunReservoir.CurrentPaint
+      │ (PaintColorChanged)
+      ▼
+PaintColorDefinition.DisplayColor
+      │
+      ├──▶ PaintSprayer.ApplyParticleColor() ──▶ SprayParticles.MainModule.startColor
+      │        (Billboard, World space, Cone shape, Velocity/Noise/Size/Color-over-Lifetime —
+      │         liquid droplets, not a laser; PaintDropletParticle.png + PaintSprayParticle.mat,
+      │         alpha-blended, never additive)
+      │
+      └──▶ (on a valid spray hit) PaintSprayer.ShowImpact() ──▶ ImpactParticles.MainModule.startColor
+               (Billboard, wider cone, burst on contact — small wet paint splash)
+
+PaintSprayer.TryGetValidHit() ──▶ RaycastHit (point, normal)
+      │
+      ▼
+ImpactParticles.transform.SetPositionAndRotation(hit.point + normal*offset, LookRotation(normal))
+      (ray misses ──▶ HideImpactVisual(), stream keeps emitting from the muzzle)
+
+PaintGunReservoir.CurrentAmount / CurrentPaint
+      │ (AmountChanged / PaintColorChanged)
+      ▼
+PaintReservoirUI.RefreshVisuals()
+      ├──▶ PaintBarFill.fillAmount = reservoir.NormalizedAmount
+      │        (Image: Type=Filled, Fill Method=Vertical, Fill Origin=Bottom, configured in code
+      │         via ConfigureFillImage() on Awake/OnEnable — bottom-to-top fill, top-to-bottom
+      │         drain while firing)
+      ├──▶ PaintBarFill.color = reservoir.CurrentPaint.DisplayColor (or emptyColor if empty)
+      ├──▶ PaintBarFill.enabled = hasVisiblePaint
+      │        (false at ~0 amount — hides only the colored layer; the grey PaintBarBackground
+      │         Image stays enabled=true always, so the empty container never disappears)
+      ├──▶ PaintIcon.color = same color logic
+      └──▶ AmountLabel.text = "{current} / {max}"
+
+Canvas/PaintHUD
+      ├── PaintIcon                              (Image, tinted by current paint)
+      ├── PaintBarBackground                     (Image: Simple, grey, Source Image =
+      │   │                                        PaintBarFillWhite.png, always enabled)
+      │   └── PaintBarFill                       (Image: Filled/Vertical/Bottom, SAME
+      │                                            PaintBarFillWhite.png sprite, tinted by
+      │                                            DisplayColor — a separate Image component
+      │                                            from the background, never shared)
+      └── AmountLabel                            (TextMeshProUGUI)
+
+Both PaintBarBackground and PaintBarFill require a real Source Image sprite for Image.Type=Filled
+to render a visible clipped fill — a null sprite was the confirmed root cause of the bar not
+visibly filling despite fillAmount being set correctly every frame.
 ```
 
 ### Jelly Paint Volume

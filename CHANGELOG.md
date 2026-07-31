@@ -4,6 +4,108 @@ All notable changes to this project are documented in this file, derived from th
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); this project does not yet
 use version numbers, so entries are grouped by date/commit instead.
 
+## 2026-07-31 — Fix vertical reservoir bar not visibly filling
+
+- **Problem**: the reservoir HUD was already converted to a vertical layout (`Fill Method =
+  Vertical`, `Fill Origin = Bottom`), but the colored fill never visibly rose or fell — only the
+  numeric `{current} / {max}` label changed.
+- **Confirmed root cause** by inspecting the live `Image` components: `PaintBarFill` and
+  `PaintBarBackground` both had **`Source Image = None`** (`m_Sprite = null`). For comparison, the
+  project's other working fill bar (`PaintProgressHUD/ProgressBackground/ProgressFill`) has a real
+  sprite assigned (`Horizontal_Plain`, from the Joystick Pack) — the reservoir bar didn't have an
+  equivalent. `PaintReservoirUI.fillImage` itself was correctly wired to `PaintBarFill`'s `Image`
+  (not stale) and `fillAmount` was being set correctly by the script every time `AmountChanged`
+  fired — the assignment logic was never the bug, only the missing sprite on the target `Image`.
+- Rejected reusing `Horizontal_Plain` (a tight-packed, pill-shaped joystick-background sprite, not
+  a neutral rectangle — would visually distort when stretched into a tall vertical bar). Instead
+  created a dedicated
+  [PaintBarFillWhite.png](Assets/ColorGame/Textures/UI/PaintBarFillWhite.png) (16×16, fully white,
+  imported as `Sprite (2D and UI)`, `Sprite Mode = Single`) and assigned it to both
+  `PaintBarBackground` and `PaintBarFill`.
+- Set `PaintBarFill`'s `RectTransform` to a proper 3px inset stretch (`offsetMin (3,3)` /
+  `offsetMax (-3,-3)`) inside `PaintBarBackground`, per the required layout.
+- Rewrote `PaintReservoirUI.cs`: added a `backgroundImage` field (previously the background was
+  never referenced by the script at all — only visually placed in the hierarchy); added
+  `ConfigureFillImage()` to explicitly set the fill `Image`'s type/fill-method/fill-origin/
+  `preserveAspect`/`raycastTarget` in code on `Awake`/`OnEnable`, so a future scene
+  misconfiguration can't silently reintroduce this class of bug; unified `HandlePaintColorChanged`/
+  `HandleAmountChanged`/`Refresh` into one `RefreshVisuals()`; the colored `fillImage` layer is now
+  explicitly `enabled = false` at zero paint (`emptyEpsilon` threshold) while `backgroundImage`
+  stays `enabled = true` — the empty grey container is always visible, the colored layer only
+  appears once there's paint to show. Still fully event-driven (`AmountChanged`/
+  `PaintColorChanged`), no `Update()` polling.
+- Reassigned all `PaintReservoirUI` serialized references on the live scene object and confirmed
+  via `object-get-data` that none were stale: `reservoir` → the `Player`'s `PaintGunReservoir`,
+  `backgroundImage` → `PaintBarBackground`'s `Image`, `fillImage` → `PaintBarFill`'s `Image`,
+  `iconImage` → `PaintIcon`'s `Image`, `amountLabel` → `AmountLabel`'s `TextMeshProUGUI`.
+- **Runtime verification** (no Play-mode tool was available in this environment, so verified by
+  directly driving the live `PaintGunReservoir` instance and invoking `PaintReservoirUI`'s private
+  `RefreshVisuals()` via reflection, then reading back the live `Image` state — not a simulation,
+  the actual scene components): `0/100` → `fillAmount 0`, fill disabled, grey background visible;
+  `45/100` → `fillAmount 0.450`, red, enabled; `100/100` → `fillAmount 1.000`; consuming down to
+  `25/100` → `fillAmount 0.250` (confirms top-to-bottom draining while firing); switching to blue
+  mid-reservoir at `50/100` → `fillAmount 0.500`, blue (confirms the color-replacement policy
+  still resets the bar correctly); draining blue to `0/100` → fill disabled again, grey remains.
+  All values matched expectations exactly.
+- Files changed: `Assets/ColorGame/Scripts/UI/PaintReservoirUI.cs`, new
+  `PaintBarFillWhite.png`, and the `Canvas/PaintHUD/PaintBarBackground`/`PaintBarFill`
+  `Image`/`RectTransform` scene references. `PaintGunReservoir.cs` was **not** modified — its
+  `AmountChanged`/`PaintColorChanged` events already fired correctly on every add/consume/clear/
+  color-replace; the bug was purely a missing sprite on the UI side.
+- **Regression check**: spray particles, jelly-paint shader/mesh, target-color restrictions,
+  `PaintCoverageTracker`, the win panel, and character animation were not touched. Zero console
+  errors after the final `assets-refresh`.
+
+## 2026-07-31 — Liquid-droplet spray and vertical reservoir HUD
+
+- **Spray problem**: `SprayParticles` rendered as a `Stretched Billboard` with a high length/velocity
+  scale, straight `Local`-space trajectory, no gravity, no size variation, and no spread — the
+  combination read as a rigid glowing laser beam rather than sprayed liquid.
+- Reconfigured the existing `SprayParticles` system (no new particle object, no script changes):
+  `renderMode` `Stretch` → `Billboard`; `simulationSpace` `Local` → `World`; `startLifetime`
+  0.16–0.28s, `startSpeed` 3.5–5.5, `startSize` 0.035–0.085, `gravityModifier` 0.05–0.18 (subtle
+  arc); `Cone` shape at 6°/0.025 radius (slight spread); Velocity-over-Lifetime X/Y jitter; Noise
+  module (strength 0.12, low frequency, damped — organic, not smoke-like); Size-over-Lifetime curve
+  `0.7 → 1.0 → 0` (liquid-blob swell-and-shrink); Color-over-Lifetime alpha-only fade (RGB stays
+  white — color still comes exclusively from `PaintColorDefinition.DisplayColor` via `startColor`);
+  a 5–7 particle burst at the start of every `Play()` cycle (fires once per `BeginSprayVisual()`
+  call — no script change needed).
+- Replaced the base particle texture with
+  [PaintDropletParticle.png](Assets/ColorGame/Textures/Particles/PaintDropletParticle.png) (128×128,
+  white, irregular/asymmetrical rounded blob, no glow halo, generated once via editor script) —
+  the previous [SoftPaintParticle.png](Assets/ColorGame/Textures/Particles/SoftPaintParticle.png)
+  was a perfectly soft circular glow that read as "magical" rather than liquid.
+  `PaintSprayParticle.mat` required no changes: already Alpha-blended (not Additive), white Base
+  Color, `ZWrite`/`Cull` off.
+- Retuned `ImpactParticles` to match: `Billboard`, shorter lifetime (0.18–0.35s), lower speed
+  (0.3–1.2), smaller size (0.04–0.10), mild gravity (0.15–0.35), a wider 30° cone, a 5–8 particle
+  burst on contact, and a light continuous rate (18) while actively hitting — reads as a small wet
+  splash, not a smoke cloud.
+- `PaintSprayer.cs` reviewed and left unchanged — it already satisfied every requirement: color
+  sourced exclusively from `paint.DisplayColor` → `ParticleSystem.MainModule.startColor`,
+  clear-on-color-change via `BeginSprayVisual`/`ShowImpact`, impact repositioning to hit
+  point/normal, no runtime materials, no `renderer.material`, color only reapplied on an actual
+  change (never per-frame).
+- **HUD problem**: the paint reservoir bar (`Canvas/PaintHUD/PaintBarBackground/PaintBarFill`) was
+  a horizontal fill bar.
+- Converted to a **vertical, bottom-to-top** fill by changing `PaintBarFill`'s `Image` component
+  (`Fill Method` `Horizontal` → `Vertical`, `Fill Origin` → `Bottom`) and resizing/repositioning
+  `PaintHUD` (110×300), `PaintIcon` (moved above the bar), `PaintBarBackground` (50×200, vertical),
+  and `AmountLabel` (moved below the bar) — same top-left corner as before, kept clear of
+  `PaintProgressHUD` (top-right) and the joystick/action-button area (bottom).
+- **`PaintReservoirUI.cs` required zero code changes** — `fillImage.fillAmount =
+  reservoir.NormalizedAmount` and the `"{current} / {max}"` label already worked identically
+  regardless of the `Image`'s fill method/origin; the existing event-driven
+  (`AmountChanged`/`PaintColorChanged`), non-polling architecture and fill-color-from-`DisplayColor`
+  logic were already exactly what this task required.
+- Files/scene objects changed: `SprayParticles` and `ImpactParticles` (`ParticleSystem`/
+  `ParticleSystemRenderer` settings), `PaintSprayParticle.mat` (`_BaseMap` texture reassigned only),
+  new `PaintDropletParticle.png`, and the `Canvas/PaintHUD` RectTransform/`Image` hierarchy. No
+  script files were modified this pass.
+- **Regression check**: `PaintCoverageTracker`, `PaintTargetMaskProvider`, the jelly-paint shader
+  pipeline, `PaintGunReservoir` gameplay behavior, `LevelCompleteController`, character animation,
+  and Replay/Next Level were not touched. Zero console errors after the final `assets-refresh`.
+
 ## 2026-07-30 — Jelly-paint volume polish
 
 - **Problem**: the accepted liquid-paint pass (glossy highlight, target guide, brush noise) still

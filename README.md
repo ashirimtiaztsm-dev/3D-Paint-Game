@@ -161,11 +161,105 @@ spray/impact particles with no leftover red particles from the previous session.
 `ImpactParticles` now shrinks to nothing over its (shorter) lifetime, has mild gravity and
 speed/size variance for a droplet/splash feel, and `PaintSprayer` fires one small extra
 `impactParticles.Emit(...)` burst the moment the stream first lands (or changes color) as a
-lightweight contact pulse — no new particle system, no UI, no screen shake, no sound.
-`SprayParticles` renders as a stretched billboard along its velocity for a tighter, more liquid
-stream look. Both continue to share the existing
+lightweight contact pulse — no new particle system, no UI, no screen shake, no sound. Both
+particle systems continue to share the existing
 [PaintSprayParticle.mat](Assets/ColorGame/Materials/Particles/PaintSprayParticle.mat) — it was not
 replaced.
+
+### Liquid-Droplet Spray (Not a Laser)
+
+`SprayParticles` previously rendered as a **Stretched Billboard** with a high length/velocity
+scale, a straight high-speed trajectory, no gravity, no spread, and no size variation — the
+combination read as a rigid glowing beam rather than sprayed liquid. Fixed by reconfiguring the
+existing `SprayParticles` system (no new particle object):
+
+- **Renderer**: `renderMode` changed from `Stretch` to **`Billboard`** — this alone removes the
+  "laser" look. Alignment `View`, sort mode `None`, shadows off, `motionVectorGenerationMode`
+  `Camera`.
+- **Main module**: `startLifetime` 0.16–0.28s, `startSpeed` 3.5–5.5, `startSize` 0.035–0.085,
+  random `startRotation` (0–2π), `simulationSpace` **World** (was `Local` — local space is what
+  made every particle move in one perfectly rigid line relative to the moving gun), `gravityModifier`
+  0.05–0.18 (a subtle downward arc), `maxParticles` 200.
+- **Emission**: continuous `rateOverTime` 90, plus a one-shot burst of 5–7 particles at the start
+  of every `Play()` cycle (fires exactly once per `BeginSprayVisual()` call, since that's the only
+  place `sprayParticles.Play()` is invoked — no script change needed to get an "on fire start" pop).
+- **Shape**: `Cone`, 6° angle, 0.025 radius — a slight spread instead of a perfectly straight line.
+- **Velocity over Lifetime**: small random X/Y drift (±0.15 / -0.08 to 0.15) so droplets separate
+  from the main stream without being redirected away from the muzzle.
+- **Noise**: strength 0.12, frequency 0.6, scroll speed 0.35, damping on — organic droplet motion,
+  tuned low enough to avoid looking like smoke.
+- **Size over Lifetime**: curve `0.7 → 1.0 (at 30%) → 0` — droplets swell slightly then shrink away,
+  reading as liquid blobs rather than static glowing points.
+- **Color over Lifetime**: RGB kept white, alpha only (`1 → 1 (70%) → 0`) — color still comes
+  exclusively from `PaintColorDefinition.DisplayColor` via `startColor`; this gradient only fades
+  opacity near end-of-life.
+- **Texture**: replaced the base map with a new
+  [PaintDropletParticle.png](Assets/ColorGame/Textures/Particles/PaintDropletParticle.png)
+  (128×128, white, irregular/asymmetrical rounded blob, no glow halo) — the previous
+  [SoftPaintParticle.png](Assets/ColorGame/Textures/Particles/SoftPaintParticle.png) was a
+  perfectly soft circular glow that read as "magical" rather than liquid. `PaintSprayParticle.mat`
+  itself needed no changes — it was already Alpha-blended (not Additive), white Base Color,
+  `ZWrite` off, `Cull` off.
+- `ImpactParticles` retuned to match: `Billboard`, lifetime 0.18–0.35s, speed 0.3–1.2, size
+  0.04–0.10, gravity 0.15–0.35, a wider 30° cone, a burst of 5–8 on contact, and a light continuous
+  rate (18) while actively hitting — a small wet splash, not a smoke cloud.
+
+**To test:** fill red, fire — the stream should look like short, separating liquid droplets with a
+slight spread and gentle downward arc, not a straight glowing line; the impact point should show a
+small colored splash. Fill blue and confirm the same in blue, with no leftover red droplets.
+
+## Paint Reservoir HUD (Vertical Fill Bar)
+
+`Canvas/PaintHUD` shows the reservoir as a **vertical, bottom-to-top** fill, in the same top-left
+corner used by the previous horizontal bar:
+
+- `PaintHUD` (110×300, anchored top-left) contains `PaintIcon` (50×50, top), `PaintBarBackground`
+  (50×200, below the icon) with `PaintBarFill` stretched inside it (3px inset on all sides), and
+  `AmountLabel` (110×30, below the bar).
+- **`PaintBarBackground` and `PaintBarFill` are two separate `Image` components** — the grey empty
+  container and the colored fill layer are never the same `Image`. Both use a dedicated
+  [PaintBarFillWhite.png](Assets/ColorGame/Textures/UI/PaintBarFillWhite.png) (16×16, fully white,
+  imported as `Sprite (2D and UI)`) as their `Source Image` — a plain white sprite lets
+  `Image.color` tint it any color at runtime.
+  - `PaintBarBackground`: `Type = Simple`, neutral dark grey, always `enabled = true` — the empty
+    container is always visible, even at 0 paint.
+  - `PaintBarFill`: `Type = Filled`, `Fill Method = Vertical`, `Fill Origin = Bottom`,
+    `Preserve Aspect = false`, `Raycast Target = false` — grows upward as the reservoir fills,
+    shrinks back down toward the bottom as it's consumed by firing.
+- **Root cause of the earlier "vertical but not visibly filling" bug**: `PaintBarFill` and
+  `PaintBarBackground` had **no `Source Image` sprite assigned at all** (`Image.sprite = null`).
+  The project's other working fill bar (`PaintProgressHUD/ProgressBackground/ProgressFill`) has a
+  real sprite; the reservoir bar didn't. Assigning a valid sprite to both fixed the visual fill.
+- `PaintReservoirUI.cs` was rewritten to be more robust: it now separately tracks
+  `backgroundImage` and `fillImage`, explicitly configures the fill `Image`'s
+  type/method/origin/`preserveAspect`/`raycastTarget` in code (`ConfigureFillImage()`, so scene
+  misconfiguration can't silently break it again), and disables just the colored `fillImage` layer
+  at zero paint while `backgroundImage` stays enabled — the grey empty container is always visible,
+  the colored layer only appears once there's actually paint to show.
+- Fill color still comes from `reservoir.CurrentPaint.DisplayColor` (or the neutral `emptyColor`
+  when empty), and the numeric label still reads `"{current} / {max}"` (e.g. `45 / 100`) — both
+  driven by the same event-driven (`AmountChanged`/`PaintColorChanged`), non-polling architecture
+  as before, now unified into a single `RefreshVisuals()` method.
+- Kept clear of `PaintProgressHUD` (anchored top-right), `MoveJoystick`/`ActionButtons` (bottom
+  area).
+
+**Runtime `fillAmount` values verified this session** (via direct reservoir manipulation +
+`RefreshVisuals()`, since Play mode wasn't available in this environment): `0/100` →
+`fillAmount 0`, fill layer disabled, background grey; `45/100` → `fillAmount 0.45`, red;
+`100/100` → `fillAmount 1.0`; consuming down to `25/100` → `fillAmount 0.25` (drains correctly);
+switching to blue at `50/100` → `fillAmount 0.5`, blue; draining blue to `0/100` → fill layer
+disabled again, grey background remains.
+
+**To test in the actual running game:** watch the bar fill upward while holding Fill on a tank,
+and visibly lower from the top while firing; confirm it reads red while carrying red paint and
+blue while carrying blue, shows only the grey empty container at `0 / 100`, reaches the very top
+at `100 / 100`, and updates color immediately on a red↔blue tank switch.
+
+**If the bar ever appears not to fill again**, check in this order: (1) `PaintReservoirUI.fillImage`
+points at `PaintBarFill`'s `Image` (not `PaintBarBackground`'s); (2) that `Image` has a non-null
+`Source Image` sprite; (3) `Image.color.a > 0`; (4) `Image.enabled` (it's intentionally `false`
+at zero paint — that's correct, not a bug); (5) the `RectTransform` has non-zero width/height;
+(6) no ancestor `CanvasGroup.alpha == 0`.
 
 ## Liquid Paint & Target Guide
 

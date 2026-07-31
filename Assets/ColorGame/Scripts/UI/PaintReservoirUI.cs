@@ -2,87 +2,171 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
-// Persistent HUD readout of the gun's current paint. Refreshes only when colour or amount changes.
+// Event-driven HUD for the paint currently stored in the gun.
+// The grey background remains visible while the colored fill rises
+// from bottom to top according to the reservoir's normalized amount.
 public class PaintReservoirUI : MonoBehaviour
 {
     [Header("References")]
     [SerializeField] private PaintGunReservoir reservoir;
+    [SerializeField] private Image backgroundImage;
     [SerializeField] private Image fillImage;
     [SerializeField] private Image iconImage;
     [SerializeField] private TextMeshProUGUI amountLabel;
 
-    [Header("Empty State")]
-    [SerializeField] private Color emptyColor = new Color(0.6f, 0.6f, 0.6f, 0.6f);
+    [Header("Colors")]
+    [SerializeField] private Color emptyColor =
+        new Color(0.35f, 0.35f, 0.35f, 0.9f);
+
+    [Header("Settings")]
+    [SerializeField, Min(0f)] private float emptyEpsilon = 0.001f;
 
     private void Awake()
     {
-        if (reservoir == null)
-            Debug.LogWarning($"{nameof(PaintReservoirUI)} on '{name}' has no {nameof(reservoir)} assigned.", this);
-
-        Refresh();
+        ValidateReferences();
+        ConfigureFillImage();
+        RefreshVisuals();
     }
 
     private void OnEnable()
     {
-        if (reservoir == null)
-            return;
+        if (reservoir != null)
+        {
+            reservoir.PaintColorChanged += HandlePaintColorChanged;
+            reservoir.AmountChanged += HandleAmountChanged;
+        }
 
-        reservoir.PaintColorChanged += HandlePaintColorChanged;
-        reservoir.AmountChanged += HandleAmountChanged;
-        Refresh();
+        ConfigureFillImage();
+        RefreshVisuals();
     }
 
     private void OnDisable()
     {
-        if (reservoir == null)
-            return;
-
-        reservoir.PaintColorChanged -= HandlePaintColorChanged;
-        reservoir.AmountChanged -= HandleAmountChanged;
+        if (reservoir != null)
+        {
+            reservoir.PaintColorChanged -= HandlePaintColorChanged;
+            reservoir.AmountChanged -= HandleAmountChanged;
+        }
     }
 
     private void HandlePaintColorChanged(PaintColorDefinition paint)
     {
-        ApplyColor(reservoir != null && !reservoir.IsEmpty ? paint : null);
+        RefreshVisuals();
     }
 
     private void HandleAmountChanged(float currentAmount)
     {
-        ApplyAmount(currentAmount);
-
-        if (reservoir != null)
-            ApplyColor(reservoir.IsEmpty ? null : reservoir.CurrentPaint);
+        RefreshVisuals();
     }
 
-    private void Refresh()
+    private void ConfigureFillImage()
     {
-        if (reservoir == null)
+        if (fillImage == null)
             return;
 
-        ApplyColor(reservoir.IsEmpty ? null : reservoir.CurrentPaint);
-        ApplyAmount(reservoir.CurrentAmount);
+        fillImage.type = Image.Type.Filled;
+        fillImage.fillMethod = Image.FillMethod.Vertical;
+        fillImage.fillOrigin = (int)Image.OriginVertical.Bottom;
+        fillImage.fillClockwise = true;
+        fillImage.preserveAspect = false;
+        fillImage.raycastTarget = false;
     }
 
-    private void ApplyColor(PaintColorDefinition paint)
+    private void RefreshVisuals()
     {
-        Color color = paint != null ? paint.DisplayColor : emptyColor;
+        if (reservoir == null)
+        {
+            ApplyEmptyState();
+            return;
+        }
+
+        float normalizedAmount =
+            Mathf.Clamp01(reservoir.NormalizedAmount);
+
+        bool hasVisiblePaint =
+            normalizedAmount > emptyEpsilon &&
+            reservoir.CurrentPaint != null;
+
+        if (backgroundImage != null)
+        {
+            backgroundImage.color = emptyColor;
+            backgroundImage.enabled = true;
+        }
 
         if (fillImage != null)
-            fillImage.color = color;
+        {
+            fillImage.fillAmount = normalizedAmount;
+            fillImage.color = hasVisiblePaint
+                ? reservoir.CurrentPaint.DisplayColor
+                : emptyColor;
+
+            // At zero amount, hide only the colored layer.
+            // The grey background remains visible as the empty bar.
+            fillImage.enabled = hasVisiblePaint;
+        }
 
         if (iconImage != null)
-            iconImage.color = color;
-    }
-
-    private void ApplyAmount(float currentAmount)
-    {
-        if (reservoir == null)
-            return;
-
-        if (fillImage != null)
-            fillImage.fillAmount = reservoir.NormalizedAmount;
+        {
+            iconImage.color = hasVisiblePaint
+                ? reservoir.CurrentPaint.DisplayColor
+                : emptyColor;
+        }
 
         if (amountLabel != null)
-            amountLabel.text = $"{Mathf.RoundToInt(currentAmount)} / {Mathf.RoundToInt(reservoir.MaximumCapacity)}";
+        {
+            amountLabel.text =
+                $"{Mathf.RoundToInt(reservoir.CurrentAmount)} / " +
+                $"{Mathf.RoundToInt(reservoir.MaximumCapacity)}";
+        }
+    }
+
+    private void ApplyEmptyState()
+    {
+        if (backgroundImage != null)
+        {
+            backgroundImage.color = emptyColor;
+            backgroundImage.enabled = true;
+        }
+
+        if (fillImage != null)
+        {
+            fillImage.fillAmount = 0f;
+            fillImage.color = emptyColor;
+            fillImage.enabled = false;
+        }
+
+        if (iconImage != null)
+            iconImage.color = emptyColor;
+
+        if (amountLabel != null)
+            amountLabel.text = "0 / 0";
+    }
+
+    private void ValidateReferences()
+    {
+        if (reservoir == null)
+            Debug.LogWarning(
+                $"{nameof(PaintReservoirUI)} on '{name}' has no reservoir assigned.",
+                this);
+
+        if (backgroundImage == null)
+            Debug.LogWarning(
+                $"{nameof(PaintReservoirUI)} on '{name}' has no background image assigned.",
+                this);
+
+        if (fillImage == null)
+            Debug.LogWarning(
+                $"{nameof(PaintReservoirUI)} on '{name}' has no fill image assigned.",
+                this);
+
+        if (amountLabel == null)
+            Debug.LogWarning(
+                $"{nameof(PaintReservoirUI)} on '{name}' has no amount label assigned.",
+                this);
+    }
+
+    private void OnValidate()
+    {
+        emptyEpsilon = Mathf.Max(0f, emptyEpsilon);
     }
 }
